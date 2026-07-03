@@ -1,6 +1,6 @@
 # scopex Context
 
-scopex is a wearable spatial mirroring project where glasses act as a physical scope over a larger logical display.
+scopex is a wearable spatial mirroring project where glasses act as a physical scope over a larger padded logical display.
 
 ## Language
 
@@ -17,15 +17,15 @@ The glasses-visible area that frames part of the larger content surface.
 _Avoid_: old visible-region names
 
 **logical display**:
-The large logical display that contains the mirrored Android app content and provides the coordinate space for crosshair actions.
+The mirrored Android app content coordinate space.
 _Avoid_: legacy display-surface names
 
-**logical display content**:
-The scaled mirrored Android app content inside the logical display.
-_Avoid_: raw capture size
+**padded logical display**:
+The logical display plus display padding around it, providing the full coordinate space for physical scope movement and crosshair reachability.
+_Avoid_: old whole-display names
 
 **display padding**:
-The required margin around the logical display content that lets the crosshair reach content edges and corners while staying centered in the physical scope.
+The required margin around the logical display that lets the crosshair reach content edges and corners while staying centered in the physical scope.
 _Avoid_: legacy display padding names
 
 **crosshair**:
@@ -81,7 +81,7 @@ An explicit time event sent into `scopex-core` for long-press thresholds, long s
 _Avoid_: core system-clock reads
 
 **ScopeX configuration event**:
-An event carrying companion setting changes into `scopex-core`; core owns safe defaults and platforms send overrides when settings change. Immediate safe configs include cache limit, active source timeout, edge zone size, and debug/privacy indicators; next-mode configs include long silence mode/timeout on the next recording and cache-line scroll delay on the next highlighted line; next-session configs include virtual display zoom or logical display content scale on the next mirroring session.
+An event carrying companion setting changes into `scopex-core`; core owns safe defaults and platforms send overrides when settings change. Immediate safe configs include cache limit, active source timeout, edge zone size, and debug/privacy indicators; next-mode configs include long silence mode/timeout on the next recording and cache-line scroll delay on the next highlighted line; next-session configs include virtual display zoom or logical display scale on the next mirroring session.
 _Avoid_: platform-only settings lookup
 
 **phone-side action**:
@@ -117,11 +117,11 @@ A phone-side action that applies Android app zoom under the crosshair. Glasses c
 _Avoid_: glasses-side zoom
 
 **virtual display zoom**:
-A companion-app configuration that determines the size or scale of the logical display content. It is not controlled from glasses buttons, glasses touch, or Bluetooth remote actions.
+A companion-app configuration that determines the size or scale of the logical display. It is not controlled from glasses buttons, glasses touch, or Bluetooth remote actions.
 _Avoid_: glasses zoom, crosshair zoom
 
 **edge scroll**:
-Phone-side fixed-speed scrolling triggered when head movement brings the crosshair into a configurable edge zone near the logical display content's boundary. In corner zones, the last dominant head-movement axis determines scroll direction. It stops when the crosshair leaves the edge zone or the user recenters.
+Phone-side fixed-speed scrolling triggered when head movement brings the crosshair into a configurable edge zone near the logical display boundary. In corner zones, the last dominant head-movement axis determines scroll direction. It stops when the crosshair leaves the edge zone or the user recenters.
 _Avoid_: scope movement
 
 **text selection hold**:
@@ -129,7 +129,7 @@ A hold interaction that enters Android-style long-press selection after the Andr
 _Avoid_: drag-to-pan
 
 **scope freeze**:
-A state where the physical scope stops moving over the logical display and the crosshair location is fixed. Speech recording and any open input cache panel both freeze the scope until recording is finished and the panel is closed.
+A state where the physical scope stops moving over the padded logical display and the crosshair location is fixed. Speech recording and any open input cache panel both freeze the scope until recording is finished and the panel is closed.
 _Avoid_: pause capture
 
 **speech recording mode**:

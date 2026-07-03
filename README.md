@@ -1,6 +1,6 @@
 # scopex
 
-ScopeX is a Kotlin Android + Rokid experiment that mirrors a user-approved Android app/display surface into a logical display. Rokid glasses eventually show a head-tracked physical scope into that logical display with a fixed center crosshair.
+ScopeX is a Kotlin Android + Rokid experiment that mirrors a user-approved Android app/display surface into a logical display. Rokid glasses eventually show a head-tracked physical scope over the padded logical display with a fixed center crosshair.
 
 First milestones:
 

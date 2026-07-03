@@ -15,8 +15,8 @@ class ScopeXMapperTest {
     )
 
     @Test
-    fun logicalDisplayAddsHalfPhysicalScopeOnEachSide() {
-        assertEquals(FloatRect(-320f, -240f, 2240f, 1320f), mapper.logicalDisplayRect())
+    fun paddedLogicalDisplayAddsHalfPhysicalScopeOnEachSide() {
+        assertEquals(FloatRect(-320f, -240f, 2240f, 1320f), mapper.paddedLogicalDisplayRect())
     }
 
     @Test

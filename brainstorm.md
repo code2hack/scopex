@@ -14,7 +14,7 @@ First engineering goal: **phone-side Android skeleton + pure ScopeX geometry + M
 
 **ScopeX turns Rokid glasses into a head-tracked physical scope into a larger Android app/display surface.**
 
-An Android companion app captures a user-approved app window or full display, places that captured surface into a logical display, and eventually streams tiled overscan regions to a Rokid-side renderer. The Rokid app uses head pose to crop locally from cached content and shows a fixed center crosshair.
+An Android companion app captures a user-approved app window or full display, places that captured surface into a logical display, and eventually streams tiled overscan regions to a Rokid-side renderer. The Rokid app uses head pose to crop the physical scope locally from cached content and shows a fixed center crosshair.
 
 ---
 
@@ -33,7 +33,7 @@ ScopeX uses the user's head as the panning mechanism:
 
 ```text
 Android app/display surface
-→ large logical display
+→ large padded logical display
 → small Rokid physical scope
 → head movement pans the physical scope
 ```
@@ -160,17 +160,17 @@ ScopeX uses several coordinate systems:
 1. Captured frame coordinates
    Pixel coordinates from MediaProjection output.
 
-2. Display content area coordinates
-   The captured frame placed into a virtual 2D coordinate system.
+2. Logical display coordinates
+   The captured frame placed at `(0, 0)`.
 
-3. logical display coordinates
-   Display content area plus half-physical-scope padding on all sides.
+3. Padded logical display coordinates
+   Logical display plus half-physical-scope padding on all sides.
 
 4. ScopeX coordinates
-   The physical visible Rokid region expressed in logical display coordinates.
+   The physical visible Rokid region expressed in padded logical display coordinates.
 
 5. Crosshair coordinates
-   The fixed center point of the physical scope, mapped back to logical display/content coordinates.
+   The fixed center point of the physical scope, mapped back to logical display coordinates.
 ```
 
 ### 5.2 Crosshair concept
@@ -204,11 +204,11 @@ voice command  → act on content near crosshair
 phone touch    → precision fallback
 ```
 
-### 5.3 logical display requirement
+### 5.3 Padded logical display requirement
 
 The fixed center crosshair must be able to point at the true corners of the captured app surface.
 
-If the content is `contentWidth × contentHeight` and the physical scope is `physicalScopeWidth × physicalScopeHeight`, then the logical display should be:
+If the content is `contentWidth × contentHeight` and the physical scope is `physicalScopeWidth × physicalScopeHeight`, then the padded logical display should be:
 
 ```text
 paddedLeft   = -physicalScopeWidth  / 2
@@ -223,7 +223,7 @@ Example:
 content: 1920 × 1080
 physical scope: 640 × 480
 
-logical display:
+padded logical display:
 left   = -320
 top    = -240
 right  = 2240
@@ -255,8 +255,8 @@ This is a hard product requirement. Do not clamp the physical scope so tightly t
 Head pose controls which content coordinate sits under the fixed center crosshair.
 
 ```text
-head yaw   → horizontal movement across the logical display content
-head pitch → vertical movement across the logical display content
+head yaw   → horizontal movement across the logical display
+head pitch → vertical movement across the logical display
 ```
 
 The app should use a fused/stabilized orientation signal where available, not raw gyroscope integration if a better orientation signal exists.
@@ -398,7 +398,7 @@ Do not bypass protected content.
 
 ---
 
-## 8. Strategy C: tiled logical display with overscan margin
+## 8. Strategy C: tiled padded logical display with overscan margin
 
 Strategy C is selected as the long-term streaming model.
 
@@ -415,14 +415,14 @@ Rokid pose update
 
 That is likely too laggy.
 
-Sending the full logical display every frame can be wasteful or infeasible.
+Sending the full padded logical display every frame can be wasteful or infeasible.
 
-Strategy C sends more than the physical scope but less than the full logical display.
+Strategy C sends more than the physical scope but less than the full padded logical display.
 
 ### 8.2 Model
 
 ```text
-Full logical display
+Full padded logical display
 ┌──────────────────────────────────────────────┐
 │                                              │
 │       cached overscan region                 │
@@ -747,8 +747,8 @@ data class ScopeXConfig(
 data class ScopeXState(
     val crosshairContentPoint: FloatPoint,
     val physicalScopeRect: FloatRect,
-    val logicalDisplayContentRect: FloatRect,
     val logicalDisplayRect: FloatRect,
+    val paddedLogicalDisplayRect: FloatRect,
 )
 ```
 
@@ -758,7 +758,7 @@ Suggested mapper API:
 class ScopeXMapper(
     private val config: ScopeXConfig,
 ) {
-    fun logicalDisplayRect(): FloatRect
+    fun paddedLogicalDisplayRect(): FloatRect
     fun stateForNormalizedPose(x: Float, y: Float): ScopeXState
     fun stateForPoseDelta(delta: PoseDelta): ScopeXState
     fun stateForCrosshairContentPoint(point: FloatPoint): ScopeXState
@@ -769,7 +769,7 @@ class ScopeXMapper(
 
 Required tests:
 
-- logical display calculation;
+- padded logical display calculation;
 - center pose maps to content center;
 - top-left corner;
 - top-right corner;
@@ -786,7 +786,7 @@ content = 1920 × 1080
 physical scope = 640 × 480
 ```
 
-Expected logical display:
+Expected padded logical display:
 
 ```text
 left   = -320
@@ -915,7 +915,7 @@ Show:
 - physical scope size;
 - crosshair coordinate;
 - physical scope rect;
-- logical display rect;
+- padded logical display rect;
 - current normalized pose;
 - FPS if available.
 
@@ -1020,7 +1020,7 @@ feat/scopex-core
 Scope:
 
 - pure Kotlin geometry module;
-- logical display math;
+- padded logical display math;
 - pose-to-crosshair mapping;
 - tests.
 
@@ -1066,7 +1066,7 @@ Agents should stop and ask before:
 ```markdown
 # scopex
 
-ScopeX is a Kotlin Android + Rokid experiment that mirrors a user-approved Android app/display surface into a logical display. Rokid glasses show a head-tracked physical scope into that logical display with a fixed center crosshair.
+ScopeX is a Kotlin Android + Rokid experiment that mirrors a user-approved Android app/display surface into a logical display. Rokid glasses show a head-tracked physical scope over the padded logical display with a fixed center crosshair.
 
 First milestones:
 
@@ -1123,7 +1123,7 @@ Deliverables:
 
 - pure geometry code;
 - unit tests;
-- logical display behavior;
+- padded logical display behavior;
 - crosshair/physical scope mapping.
 
 Acceptance:
@@ -1135,7 +1135,7 @@ Acceptance:
 
 Deliverables:
 
-- synthetic logical display content;
+- synthetic logical display;
 - physical scope crop;
 - fixed crosshair;
 - touch drag/fake pose;
@@ -1166,7 +1166,7 @@ Acceptance:
 
 Deliverables:
 
-- captured frame becomes logical display content;
+- captured frame becomes logical display;
 - ScopeX simulator crops captured frame;
 - debug overlay shows capture + physical scope coordinates.
 
@@ -1258,7 +1258,7 @@ Important facts to verify against those docs during implementation:
 ScopeX should start as a clean Kotlin Android project focused on one breakthrough:
 
 ```text
-A user-approved Android app/display surface can be viewed through a larger logical display using a fixed center crosshair and a movable physical scope.
+A user-approved Android app/display surface can be viewed through a padded logical display using a fixed center crosshair and a movable physical scope.
 ```
 
 Do not start with Rokid SDK, Termux, ASR, Bluetooth ring, OCR, or AccessibilityService. Those are extensions.

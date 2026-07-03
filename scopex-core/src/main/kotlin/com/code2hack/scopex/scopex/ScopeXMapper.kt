@@ -3,7 +3,7 @@ package com.code2hack.scopex.scopex
 class ScopeXMapper(
     private val config: ScopeXConfig,
 ) {
-    fun logicalDisplayRect(): FloatRect {
+    fun paddedLogicalDisplayRect(): FloatRect {
         val halfPhysicalScopeWidth = config.physicalScopeSize.width / 2f
         val halfPhysicalScopeHeight = config.physicalScopeSize.height / 2f
         return FloatRect(
@@ -53,8 +53,8 @@ class ScopeXMapper(
                 right = crosshair.x + halfPhysicalScopeWidth,
                 bottom = crosshair.y + halfPhysicalScopeHeight,
             ),
-            logicalDisplayContentRect = contentRect,
-            logicalDisplayRect = logicalDisplayRect(),
+            logicalDisplayRect = contentRect,
+            paddedLogicalDisplayRect = paddedLogicalDisplayRect(),
         )
     }
 }

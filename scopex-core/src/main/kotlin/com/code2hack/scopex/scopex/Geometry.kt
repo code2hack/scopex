@@ -43,6 +43,6 @@ data class ScopeXConfig(
 data class ScopeXState(
     val crosshairContentPoint: FloatPoint,
     val physicalScopeRect: FloatRect,
-    val logicalDisplayContentRect: FloatRect,
     val logicalDisplayRect: FloatRect,
+    val paddedLogicalDisplayRect: FloatRect,
 )

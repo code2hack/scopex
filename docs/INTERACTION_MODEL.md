@@ -15,13 +15,13 @@ In `LiveScope`, the glasses touch panel acts like a finger touching the mirrored
 - Phone zoom is a phone-side action under the crosshair, not glasses-side magnification.
 - Two-finger click sends `RecenterScope`.
 
-The touch panel does not move the physical scope. The physical scope moves through head/glasses movement over the logical display.
+The touch panel does not move the physical scope. The physical scope moves through head/glasses movement over the padded logical display.
 
 ### Edge Scroll
 
 Edge scroll is behavior inside `LiveScope`.
 
-- It starts when head movement brings the crosshair into a configurable edge zone near the logical display content's boundary.
+- It starts when head movement brings the crosshair into a configurable edge zone near the logical display boundary.
 - It sends fixed-speed phone-side scroll.
 - In corner zones, the last dominant head-movement axis determines scroll direction.
 - It stops when the crosshair leaves the edge zone or `RecenterScope` happens.
@@ -227,7 +227,7 @@ Configuration events:
 
 - immediate: cache limit, active source timeout, edge zone size, debug/privacy indicators;
 - next-mode: long silence mode/timeout on next recording, cache-line scroll delay on next highlighted line;
-- next-session: virtual display zoom or logical display content scale.
+- next-session: virtual display zoom or logical display scale.
 
 ## Settings
 
@@ -239,7 +239,7 @@ Configuration events:
 | clipboard import | off | immediate |
 | debug capture mode | off | immediate |
 | quit confirmation timeout | 2 s | immediate |
-| virtual display zoom / logical display content scale | companion-defined | next mirroring session |
+| virtual display zoom / logical display scale | companion-defined | next mirroring session |
 
 ## Privacy And Failure Rules
 

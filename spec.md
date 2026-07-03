@@ -4,7 +4,7 @@ Read `brainstorm.md` for the full handoff. This file is the working bootstrap sp
 
 ## Product
 
-ScopeX turns a user-approved Android app/display surface into content on a larger logical display. A visible device, such as Rokid glasses later, shows a movable physical scope into that logical display while the crosshair stays fixed at the center.
+ScopeX turns a user-approved Android app/display surface into a logical display. A visible device, such as Rokid glasses later, shows a movable physical scope over the padded logical display while the crosshair stays fixed at the center.
 
 ## Package
 
@@ -27,16 +27,16 @@ Do not add MediaProjection, Rokid SDK, ASR, Bluetooth ring input, AccessibilityS
 
 Coordinate model:
 
-- logical display content: captured content bounds, starting at `(0, 0)`;
-- logical display: content plus half the physical scope size on all sides;
-- physical scope rect: physical scope in logical display coordinates;
+- logical display: captured content bounds, starting at `(0, 0)`;
+- padded logical display: logical display plus half the physical scope size on all sides;
+- physical scope rect: physical scope in padded logical display coordinates;
 - crosshair content point: fixed center of the physical scope mapped into content coordinates.
 
 Required example:
 
-- content: `1920 x 1080`;
+- logical display: `1920 x 1080`;
 - physical scope: `640 x 480`;
-- logical display rect: `(-320, -240, 2240, 1320)`.
+- padded logical display rect: `(-320, -240, 2240, 1320)`.
 
 ## Privacy And Security
 
