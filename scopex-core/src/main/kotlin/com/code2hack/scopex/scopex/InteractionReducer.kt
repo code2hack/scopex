@@ -1,11 +1,26 @@
 package com.code2hack.scopex.scopex
 
 const val DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS: Long = 500L
+const val DEFAULT_EDGE_ZONE_SIZE: Float = 64f
+const val DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS: Long = 2_000L
+const val QUIT_CONFIRMATION_MESSAGE: String = "Double click again to quit ScopeX"
 
 enum class ScopeXInputSource {
     Glasses,
     Remote,
     Debug,
+}
+
+enum class ScopeXMovementAxis {
+    Horizontal,
+    Vertical,
+}
+
+enum class ScopeXEdgeScrollDirection {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 data class ScopeXSourceLock(
@@ -19,6 +34,12 @@ sealed interface ScopeXInteractionState {
 
     data class LiveScope(
         val crosshairContentPoint: FloatPoint,
+        val logicalDisplaySize: IntSize,
+        val edgeScrollDirection: ScopeXEdgeScrollDirection? = null,
+        val lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        val edgeZoneSize: Float = DEFAULT_EDGE_ZONE_SIZE,
+        val quitConfirmationActive: Boolean = false,
+        val systemMessage: String? = null,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
     ) : ScopeXInteractionState
 
@@ -38,12 +59,44 @@ sealed interface ScopeXEvent {
         data class ClickCrosshair(
             override val source: ScopeXInputSource,
         ) : Canonical
+
+        data class HoldCrosshair(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class MoveHeldCrosshair(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class ScrollAtCrosshair(
+            override val source: ScopeXInputSource,
+            val delta: FloatPoint,
+        ) : Canonical
+
+        data class ZoomAtCrosshair(
+            override val source: ScopeXInputSource,
+            val scaleFactor: Float,
+        ) : Canonical
+
+        data class RecenterScope(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class Escape(
+            override val source: ScopeXInputSource,
+        ) : Canonical
     }
 
-    sealed interface Result : ScopeXEvent
+    sealed interface Result : ScopeXEvent {
+        data class CrosshairMoved(
+            val crosshairContentPoint: FloatPoint,
+            val dominantMovementAxis: ScopeXMovementAxis,
+        ) : Result
+    }
 
     sealed interface Timer : ScopeXEvent {
         data object ActiveSourceIdleTimeout : Timer
+        data object QuitConfirmationTimeout : Timer
     }
 
     sealed interface Configuration : ScopeXEvent {
@@ -56,6 +109,14 @@ sealed interface ScopeXEvent {
                 }
             }
         }
+
+        data class SetEdgeZoneSize(
+            val size: Float,
+        ) : Configuration {
+            init {
+                require(size > 0f) { "edge zone size must be positive" }
+            }
+        }
     }
 }
 
@@ -63,6 +124,44 @@ sealed interface ScopeXEffectCommand {
     data class InjectClick(
         val crosshairContentPoint: FloatPoint,
     ) : ScopeXEffectCommand
+
+    data class InjectLongPress(
+        val crosshairContentPoint: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectHeldMove(
+        val crosshairContentPoint: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectScroll(
+        val crosshairContentPoint: FloatPoint,
+        val delta: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectZoom(
+        val crosshairContentPoint: FloatPoint,
+        val scaleFactor: Float,
+    ) : ScopeXEffectCommand
+
+    data class StartEdgeScroll(
+        val direction: ScopeXEdgeScrollDirection,
+    ) : ScopeXEffectCommand
+
+    data object StopEdgeScroll : ScopeXEffectCommand
+
+    data class RecenterScope(
+        val crosshairContentPoint: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class ShowMessage(
+        val message: String,
+    ) : ScopeXEffectCommand
+
+    data class StartQuitConfirmationTimer(
+        val timeoutMillis: Long,
+    ) : ScopeXEffectCommand
+
+    data object QuitScopeX : ScopeXEffectCommand
 }
 
 data class ScopeXTransition(
@@ -85,35 +184,126 @@ object ScopeXReducer {
                     ),
                 )
 
+            event is ScopeXEvent.Configuration.SetEdgeZoneSize ->
+                when (state) {
+                    is ScopeXInteractionState.LiveScope ->
+                        ScopeXTransition(state.copy(edgeZoneSize = event.size))
+                    else -> ScopeXTransition(state)
+                }
+
+            event == ScopeXEvent.Timer.QuitConfirmationTimeout ->
+                when (state) {
+                    is ScopeXInteractionState.LiveScope ->
+                        ScopeXTransition(
+                            state.copy(
+                                quitConfirmationActive = false,
+                                systemMessage = null,
+                            ),
+                        )
+                    else -> ScopeXTransition(state)
+                }
+
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
 
-            event is ScopeXEvent.Canonical.ClickCrosshair ->
-                reduceClickCrosshair(state, event)
+            event is ScopeXEvent.Result.CrosshairMoved ->
+                reduceCrosshairMoved(state, event)
+
+            event is ScopeXEvent.Canonical ->
+                reduceLiveScopeCanonical(state, event)
 
             else -> ScopeXTransition(state)
         }
 
-    private fun reduceClickCrosshair(
+    private fun reduceLiveScopeCanonical(
         state: ScopeXInteractionState,
-        event: ScopeXEvent.Canonical.ClickCrosshair,
+        event: ScopeXEvent.Canonical,
     ): ScopeXTransition {
         if (!state.sourceLock.accepts(event.source)) {
             return ScopeXTransition(state)
         }
 
         val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
-        return when (nextState) {
-            is ScopeXInteractionState.LiveScope ->
-                ScopeXTransition(
-                    state = nextState,
-                    effects = listOf(
-                        ScopeXEffectCommand.InjectClick(nextState.crosshairContentPoint),
+        if (nextState !is ScopeXInteractionState.LiveScope) {
+            return ScopeXTransition(state)
+        }
+
+        val effect = when (event) {
+            is ScopeXEvent.Canonical.ClickCrosshair ->
+                ScopeXEffectCommand.InjectClick(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.HoldCrosshair ->
+                ScopeXEffectCommand.InjectLongPress(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.MoveHeldCrosshair ->
+                ScopeXEffectCommand.InjectHeldMove(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.ScrollAtCrosshair ->
+                ScopeXEffectCommand.InjectScroll(nextState.crosshairContentPoint, event.delta)
+            is ScopeXEvent.Canonical.ZoomAtCrosshair ->
+                ScopeXEffectCommand.InjectZoom(nextState.crosshairContentPoint, event.scaleFactor)
+            is ScopeXEvent.Canonical.RecenterScope -> {
+                val center = nextState.centerCrosshairContentPoint()
+                val effects = buildList {
+                    add(ScopeXEffectCommand.RecenterScope(center))
+                    if (nextState.edgeScrollDirection != null) {
+                        add(ScopeXEffectCommand.StopEdgeScroll)
+                    }
+                }
+                return ScopeXTransition(
+                    nextState.copy(
+                        crosshairContentPoint = center,
+                        edgeScrollDirection = null,
+                    ),
+                    effects,
+                )
+            }
+            is ScopeXEvent.Canonical.Escape -> {
+                if (nextState.quitConfirmationActive) {
+                    return ScopeXTransition(nextState, listOf(ScopeXEffectCommand.QuitScopeX))
+                }
+
+                return ScopeXTransition(
+                    nextState.copy(
+                        quitConfirmationActive = true,
+                        systemMessage = QUIT_CONFIRMATION_MESSAGE,
+                    ),
+                    listOf(
+                        ScopeXEffectCommand.ShowMessage(QUIT_CONFIRMATION_MESSAGE),
+                        ScopeXEffectCommand.StartQuitConfirmationTimer(
+                            DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS,
+                        ),
                     ),
                 )
-
-            else -> ScopeXTransition(state)
+            }
         }
+
+        return ScopeXTransition(nextState, listOf(effect))
+    }
+
+    private fun reduceCrosshairMoved(
+        state: ScopeXInteractionState,
+        event: ScopeXEvent.Result.CrosshairMoved,
+    ): ScopeXTransition {
+        if (state !is ScopeXInteractionState.LiveScope) {
+            return ScopeXTransition(state)
+        }
+
+        val direction = edgeScrollDirection(
+            point = event.crosshairContentPoint,
+            logicalDisplaySize = state.logicalDisplaySize,
+            edgeZoneSize = state.edgeZoneSize,
+            dominantMovementAxis = event.dominantMovementAxis,
+        )
+        val nextState = state.copy(
+            crosshairContentPoint = event.crosshairContentPoint,
+            edgeScrollDirection = direction,
+            lastDominantMovementAxis = event.dominantMovementAxis,
+        )
+        val effects = when {
+            state.edgeScrollDirection == direction -> emptyList()
+            direction == null -> listOf(ScopeXEffectCommand.StopEdgeScroll)
+            else -> listOf(ScopeXEffectCommand.StartEdgeScroll(direction))
+        }
+
+        return ScopeXTransition(nextState, effects)
     }
 }
 
@@ -134,3 +324,34 @@ private fun ScopeXInteractionState.withSourceLock(
         is ScopeXInteractionState.Recording -> copy(sourceLock = sourceLock)
         is ScopeXInteractionState.InputCachePanelOpen -> copy(sourceLock = sourceLock)
     }
+
+private fun ScopeXInteractionState.LiveScope.centerCrosshairContentPoint(): FloatPoint =
+    FloatPoint(
+        x = logicalDisplaySize.width / 2f,
+        y = logicalDisplaySize.height / 2f,
+    )
+
+private fun edgeScrollDirection(
+    point: FloatPoint,
+    logicalDisplaySize: IntSize,
+    edgeZoneSize: Float,
+    dominantMovementAxis: ScopeXMovementAxis,
+): ScopeXEdgeScrollDirection? {
+    val horizontal = when {
+        point.x <= edgeZoneSize -> ScopeXEdgeScrollDirection.Left
+        point.x >= logicalDisplaySize.width - edgeZoneSize -> ScopeXEdgeScrollDirection.Right
+        else -> null
+    }
+    val vertical = when {
+        point.y <= edgeZoneSize -> ScopeXEdgeScrollDirection.Up
+        point.y >= logicalDisplaySize.height - edgeZoneSize -> ScopeXEdgeScrollDirection.Down
+        else -> null
+    }
+
+    return when {
+        horizontal != null && vertical != null ->
+            if (dominantMovementAxis == ScopeXMovementAxis.Horizontal) horizontal else vertical
+        horizontal != null -> horizontal
+        else -> vertical
+    }
+}
