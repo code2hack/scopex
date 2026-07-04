@@ -6,3 +6,4 @@ local.properties
 *.swp
 .idea/
 .superpowers/
+.worktrees/
