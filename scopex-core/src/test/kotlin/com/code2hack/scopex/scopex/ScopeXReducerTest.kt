@@ -412,12 +412,97 @@ class ScopeXReducerTest {
         )
     }
 
+    @Test
+    fun recenterScopeRecentersCrosshairAndStopsEdgeScroll() {
+        val state = liveScope(
+            crosshairContentPoint = FloatPoint(25f, 400f),
+            edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+        )
+        val center = FloatPoint(500f, 400f)
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.RecenterScope(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                crosshairContentPoint = center,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.RecenterScope(center),
+                ScopeXEffectCommand.StopEdgeScroll,
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun escapeShowsQuitConfirmationThenSecondEscapeQuits() {
+        val state = liveScope()
+
+        val first = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.Escape(ScopeXInputSource.Glasses),
+        )
+
+        val confirmingState = liveScope(
+            sourceLock = ScopeXSourceLock(
+                activeSource = ScopeXInputSource.Glasses,
+                ownsActions = true,
+            ),
+            quitConfirmationActive = true,
+            systemMessage = QUIT_CONFIRMATION_MESSAGE,
+        )
+        assertEquals(confirmingState, first.state)
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.ShowMessage(QUIT_CONFIRMATION_MESSAGE),
+                ScopeXEffectCommand.StartQuitConfirmationTimer(DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS),
+            ),
+            first.effects,
+        )
+
+        val second = ScopeXReducer.reduce(
+            state = first.state,
+            event = ScopeXEvent.Canonical.Escape(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(confirmingState, second.state)
+        assertEquals(listOf(ScopeXEffectCommand.QuitScopeX), second.effects)
+    }
+
+    @Test
+    fun quitConfirmationTimeoutClearsConfirmationState() {
+        val state = liveScope(
+            quitConfirmationActive = true,
+            systemMessage = QUIT_CONFIRMATION_MESSAGE,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Timer.QuitConfirmationTimeout,
+        )
+
+        assertEquals(liveScope(), transition.state)
+        assertEquals(emptyList(), transition.effects)
+    }
+
     private fun liveScope(
         sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
         crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
         edgeScrollDirection: ScopeXEdgeScrollDirection? = null,
         lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
         edgeZoneSize: Float = 100f,
+        quitConfirmationActive: Boolean = false,
+        systemMessage: String? = null,
     ) = ScopeXInteractionState.LiveScope(
         crosshairContentPoint = crosshairContentPoint,
         logicalDisplaySize = logicalDisplaySize,
@@ -425,5 +510,7 @@ class ScopeXReducerTest {
         edgeScrollDirection = edgeScrollDirection,
         lastDominantMovementAxis = lastDominantMovementAxis,
         edgeZoneSize = edgeZoneSize,
+        quitConfirmationActive = quitConfirmationActive,
+        systemMessage = systemMessage,
     )
 }
