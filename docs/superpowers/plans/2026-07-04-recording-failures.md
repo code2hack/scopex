@@ -4,7 +4,7 @@
 
 **Goal:** Implement issue #7 by adding reducer support for recording Escape rollback, ASR failure, and microphone permission denial.
 
-**Architecture:** Extend the existing pure `ScopeXReducer` seam. Reuse `Recording.savedLineCount` and `Recording.preRecordingInputCache` to roll back session-only ASR lines without adding another session abstraction.
+**Architecture:** Extend the existing pure `ScopeXReducer` seam. Reuse `Recording.preRecordingInputCache` as the rollback snapshot instead of adding another session abstraction.
 
 **Tech Stack:** Kotlin/JVM 2.2.20, Gradle, `kotlin.test`.
 
@@ -52,7 +52,7 @@ Expected: compile failure for missing `AbortAsr`, or assertion failure because `
 
 - [ ] **Step 3: Implement minimal Escape rollback**
 
-Add `AbortAsr`, route recording `Escape` inside `reduceRecordingCanonical`, drop `savedLineCount` tail entries from `inputCache.entries`, restore highlight from `preRecordingInputCache`, and return panel or live state from existing conversion helpers.
+Add `AbortAsr`, route recording `Escape` inside `reduceRecordingCanonical`, restore `preRecordingInputCache`, and return panel or live state from existing conversion helpers.
 
 - [ ] **Step 4: Run green**
 
