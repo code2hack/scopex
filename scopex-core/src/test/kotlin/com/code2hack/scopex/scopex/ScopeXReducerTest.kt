@@ -722,6 +722,192 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun insertHighlightedCacheLineRequiresEditableFocus() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(entries = listOf("old", "new"), highlightedIndex = 1),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.InsertHighlightedCacheLine(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            state.copy(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.ShowMessage(MOVE_CROSSHAIR_TO_INPUT_AREA_MESSAGE)),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun editableFocusResultUpdatesOpenInputCachePanel() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(entries = listOf("old"), highlightedIndex = 0),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.FrozenCrosshairTargetEditableFocusChanged(
+                hasEditableFocus = true,
+            ),
+        )
+
+        assertEquals(
+            state.copy(frozenCrosshairTargetHasEditableFocus = true),
+            transition.state,
+        )
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun insertHighlightedCacheLineEmitsInsertTextAndSuccessRemovesLine() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(
+                entries = listOf("old", "selected", "newer"),
+                highlightedIndex = 1,
+            ),
+            frozenCrosshairTargetHasEditableFocus = true,
+        )
+
+        val insertion = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.InsertHighlightedCacheLine(ScopeXInputSource.Glasses),
+        )
+
+        val pendingState = state.copy(
+            sourceLock = ScopeXSourceLock(
+                activeSource = ScopeXInputSource.Glasses,
+                ownsActions = true,
+            ),
+            pendingInsertedCacheIndex = 1,
+        )
+        assertEquals(pendingState, insertion.state)
+        assertEquals(listOf(ScopeXEffectCommand.InsertText("selected")), insertion.effects)
+
+        val success = ScopeXReducer.reduce(
+            state = insertion.state,
+            event = ScopeXEvent.Result.TextInsertionSucceeded,
+        )
+
+        assertEquals(
+            pendingState.copy(
+                inputCache = ScopeXInputCache(
+                    entries = listOf("old", "newer"),
+                    highlightedIndex = 1,
+                ),
+                pendingInsertedCacheIndex = null,
+            ),
+            success.state,
+        )
+        assertEquals(emptyList(), success.effects)
+    }
+
+    @Test
+    fun insertingOnlyRemainingCacheLineClosesPanelAndUnfreezesScope() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(entries = listOf("only"), highlightedIndex = 0),
+            frozenCrosshairTargetHasEditableFocus = true,
+        )
+
+        val insertion = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.InsertHighlightedCacheLine(ScopeXInputSource.Glasses),
+        )
+        val success = ScopeXReducer.reduce(
+            state = insertion.state,
+            event = ScopeXEvent.Result.TextInsertionSucceeded,
+        )
+
+        assertEquals(
+            liveScope(
+                inputCache = ScopeXInputCache(),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            success.state,
+        )
+        assertEquals(emptyList(), success.effects)
+    }
+
+    @Test
+    fun deleteHighlightedCacheLineRemovesLineAndWrapsOrClosesPanel() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(
+                entries = listOf("old", "middle", "new"),
+                highlightedIndex = 2,
+            ),
+            highlightedLineScrollOffset = 3,
+        )
+
+        val deletedTail = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.DeleteHighlightedCacheLine(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = ScopeXInputCache(entries = listOf("old", "middle"), highlightedIndex = 0),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            deletedTail.state,
+        )
+        assertEquals(emptyList(), deletedTail.effects)
+
+        val oneLineState = inputCachePanelOpen(
+            sourceLock = ScopeXSourceLock(
+                activeSource = ScopeXInputSource.Glasses,
+                ownsActions = true,
+            ),
+            inputCache = ScopeXInputCache(entries = listOf("only"), highlightedIndex = 0),
+        )
+        val deletedOnly = ScopeXReducer.reduce(
+            state = oneLineState,
+            event = ScopeXEvent.Canonical.DeleteHighlightedCacheLine(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                inputCache = ScopeXInputCache(),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            deletedOnly.state,
+        )
+        assertEquals(emptyList(), deletedOnly.effects)
+    }
+
+    @Test
+    fun textInsertionFailureKeepsCacheEntriesAndClearsPendingInsert() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(entries = listOf("old", "selected"), highlightedIndex = 1),
+            pendingInsertedCacheIndex = 1,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.TextInsertionFailed,
+        )
+
+        assertEquals(state.copy(pendingInsertedCacheIndex = null), transition.state)
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
     fun configurationEventOverridesInputCacheActiveLimitAndEvictsHead() {
         val state = liveScope(
             inputCache = ScopeXInputCache(

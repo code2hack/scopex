@@ -6,6 +6,7 @@ const val DEFAULT_INPUT_CACHE_ACTIVE_LIMIT: Int = 50
 const val DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS: Long = 2_000L
 const val ASR_FAILURE_MESSAGE: String = "Speech recognition failed"
 const val MICROPHONE_PERMISSION_DENIED_MESSAGE: String = "Microphone permission needed on phone"
+const val MOVE_CROSSHAIR_TO_INPUT_AREA_MESSAGE: String = "move crosshair to input area to input"
 const val QUIT_CONFIRMATION_MESSAGE: String = "Double click again to quit ScopeX"
 
 enum class ScopeXInputSource {
@@ -141,6 +142,14 @@ sealed interface ScopeXEvent {
             val offset: Int,
         ) : Canonical
 
+        data class InsertHighlightedCacheLine(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class DeleteHighlightedCacheLine(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
         data class StartRecording(
             override val source: ScopeXInputSource,
         ) : Canonical
@@ -173,6 +182,14 @@ sealed interface ScopeXEvent {
         data object AsrFailure : Result
 
         data object MicrophonePermissionDenied : Result
+
+        data class FrozenCrosshairTargetEditableFocusChanged(
+            val hasEditableFocus: Boolean,
+        ) : Result
+
+        data object TextInsertionSucceeded : Result
+
+        data object TextInsertionFailed : Result
 
         data class CrosshairMoved(
             val crosshairContentPoint: FloatPoint,
@@ -258,6 +275,10 @@ sealed interface ScopeXEffectCommand {
 
     data class ShowMessage(
         val message: String,
+    ) : ScopeXEffectCommand
+
+    data class InsertText(
+        val text: String,
     ) : ScopeXEffectCommand
 
     data object ShowEmptyInputCachePrompt : ScopeXEffectCommand
@@ -355,6 +376,24 @@ object ScopeXReducer {
                         ScopeXEffectCommand.ShowPermissionRoute,
                     ),
                 )
+
+            event is ScopeXEvent.Result.FrozenCrosshairTargetEditableFocusChanged ->
+                when (state) {
+                    is ScopeXInteractionState.InputCachePanelOpen -> ScopeXTransition(
+                        state.copy(frozenCrosshairTargetHasEditableFocus = event.hasEditableFocus),
+                    )
+                    else -> ScopeXTransition(state)
+                }
+
+            event == ScopeXEvent.Result.TextInsertionSucceeded ->
+                reduceTextInsertionSucceeded(state)
+
+            event == ScopeXEvent.Result.TextInsertionFailed ->
+                when (state) {
+                    is ScopeXInteractionState.InputCachePanelOpen ->
+                        ScopeXTransition(state.copy(pendingInsertedCacheIndex = null))
+                    else -> ScopeXTransition(state)
+                }
 
             event is ScopeXEvent.Result.AppendInputCacheEntry ->
                 ScopeXTransition(state.withInputCache(state.inputCache.appendEntry(event.text)))
@@ -470,6 +509,8 @@ object ScopeXReducer {
             }
             is ScopeXEvent.Canonical.StartRecording,
             is ScopeXEvent.Canonical.MoveCacheHighlight,
+            is ScopeXEvent.Canonical.InsertHighlightedCacheLine,
+            is ScopeXEvent.Canonical.DeleteHighlightedCacheLine,
             is ScopeXEvent.Canonical.FinishRecording -> return ScopeXTransition(state)
         }
 
@@ -492,8 +533,80 @@ object ScopeXReducer {
                     highlightedLineScrollOffset = 0,
                 ),
             )
+            is ScopeXEvent.Canonical.InsertHighlightedCacheLine ->
+                reduceInsertHighlightedCacheLine(state, event.source)
+            is ScopeXEvent.Canonical.DeleteHighlightedCacheLine ->
+                reduceDeleteHighlightedCacheLine(state, event.source)
             else -> ScopeXTransition(state)
         }
+
+    private fun reduceInsertHighlightedCacheLine(
+        state: ScopeXInteractionState.InputCachePanelOpen,
+        source: ScopeXInputSource,
+    ): ScopeXTransition {
+        val nextState = state.copy(sourceLock = state.sourceLock.acquire(source))
+        if (!nextState.frozenCrosshairTargetHasEditableFocus) {
+            return ScopeXTransition(
+                nextState,
+                listOf(ScopeXEffectCommand.ShowMessage(MOVE_CROSSHAIR_TO_INPUT_AREA_MESSAGE)),
+            )
+        }
+        if (nextState.pendingInsertedCacheIndex != null) {
+            return ScopeXTransition(nextState)
+        }
+
+        val highlightedIndex = nextState.inputCache.highlightedIndex
+            ?: return ScopeXTransition(nextState)
+        val highlightedText = nextState.inputCache.entries.getOrNull(highlightedIndex)
+            ?: return ScopeXTransition(nextState)
+
+        return ScopeXTransition(
+            nextState.copy(pendingInsertedCacheIndex = highlightedIndex),
+            listOf(ScopeXEffectCommand.InsertText(highlightedText)),
+        )
+    }
+
+    private fun reduceDeleteHighlightedCacheLine(
+        state: ScopeXInteractionState.InputCachePanelOpen,
+        source: ScopeXInputSource,
+    ): ScopeXTransition {
+        val nextState = state.copy(sourceLock = state.sourceLock.acquire(source))
+        val highlightedIndex = nextState.inputCache.highlightedIndex
+            ?: return ScopeXTransition(nextState)
+        val inputCache = nextState.inputCache.removeEntryAt(highlightedIndex)
+
+        if (inputCache.entries.isEmpty()) {
+            return ScopeXTransition(nextState.copy(inputCache = inputCache).toLiveScope())
+        }
+
+        return ScopeXTransition(
+            nextState.copy(
+                inputCache = inputCache,
+                pendingInsertedCacheIndex = null,
+                highlightedLineScrollOffset = 0,
+            ),
+        )
+    }
+
+    private fun reduceTextInsertionSucceeded(state: ScopeXInteractionState): ScopeXTransition {
+        if (state !is ScopeXInteractionState.InputCachePanelOpen) {
+            return ScopeXTransition(state)
+        }
+
+        val pendingIndex = state.pendingInsertedCacheIndex ?: return ScopeXTransition(state)
+        val inputCache = state.inputCache.removeEntryAt(pendingIndex)
+        val nextState = state.copy(
+            inputCache = inputCache,
+            pendingInsertedCacheIndex = null,
+            highlightedLineScrollOffset = 0,
+        )
+
+        if (inputCache.entries.isEmpty()) {
+            return ScopeXTransition(nextState.toLiveScope())
+        }
+
+        return ScopeXTransition(nextState)
+    }
 
     private fun reduceRecordingSegment(state: ScopeXInteractionState): ScopeXTransition =
         when (state) {
@@ -697,6 +810,21 @@ private fun ScopeXInputCache.moveHighlight(offset: Int): ScopeXInputCache {
 
     val current = highlightedIndex ?: entries.lastIndex
     return copy(highlightedIndex = Math.floorMod(current + offset, entries.size))
+}
+
+private fun ScopeXInputCache.removeEntryAt(index: Int): ScopeXInputCache {
+    if (index !in entries.indices) {
+        return this
+    }
+
+    val nextEntries = entries.filterIndexed { entryIndex, _ -> entryIndex != index }
+    val nextHighlightedIndex = when {
+        nextEntries.isEmpty() -> null
+        index in nextEntries.indices -> index
+        else -> 0
+    }
+
+    return copy(entries = nextEntries, highlightedIndex = nextHighlightedIndex)
 }
 
 private fun reduceClipboardImportConfiguration(
