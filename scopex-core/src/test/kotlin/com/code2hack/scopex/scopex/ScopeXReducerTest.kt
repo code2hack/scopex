@@ -89,15 +89,20 @@ class ScopeXReducerTest {
 
     @Test
     fun canonicalTouchActionInNonLiveScopeStateIsNoOp() {
-        val state = ScopeXInteractionState.Recording()
-
-        val transition = ScopeXReducer.reduce(
-            state = state,
-            event = ScopeXEvent.Canonical.HoldCrosshair(ScopeXInputSource.Glasses),
+        val states = listOf(
+            ScopeXInteractionState.Recording(),
+            ScopeXInteractionState.InputCachePanelOpen(),
         )
 
-        assertEquals(state, transition.state)
-        assertEquals(emptyList(), transition.effects)
+        for (state in states) {
+            val transition = ScopeXReducer.reduce(
+                state = state,
+                event = ScopeXEvent.Canonical.RecenterScope(ScopeXInputSource.Glasses),
+            )
+
+            assertEquals(state, transition.state)
+            assertEquals(emptyList(), transition.effects)
+        }
     }
 
     @Test
@@ -116,6 +121,32 @@ class ScopeXReducerTest {
 
         assertEquals(state, transition.state)
         assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun competingSourceRecenterAndEscapeAreRejectedWithoutEffects() {
+        val sourceLock = ScopeXSourceLock(
+            activeSource = ScopeXInputSource.Glasses,
+            ownsActions = true,
+        )
+        val state = liveScope(sourceLock = sourceLock)
+        val confirmingState = liveScope(
+            sourceLock = sourceLock,
+            quitConfirmationActive = true,
+            systemMessage = QUIT_CONFIRMATION_MESSAGE,
+        )
+        val transitions = listOf(
+            state to ScopeXEvent.Canonical.RecenterScope(ScopeXInputSource.Remote),
+            state to ScopeXEvent.Canonical.Escape(ScopeXInputSource.Remote),
+            confirmingState to ScopeXEvent.Canonical.Escape(ScopeXInputSource.Remote),
+        )
+
+        for ((lockedState, event) in transitions) {
+            val transition = ScopeXReducer.reduce(lockedState, event)
+
+            assertEquals(lockedState, transition.state)
+            assertEquals(emptyList(), transition.effects)
+        }
     }
 
     @Test
@@ -477,6 +508,36 @@ class ScopeXReducerTest {
 
         assertEquals(confirmingState, second.state)
         assertEquals(listOf(ScopeXEffectCommand.QuitScopeX), second.effects)
+    }
+
+    @Test
+    fun escapeWhileEdgeScrollingShowsQuitConfirmationAndKeepsEdgeScroll() {
+        val state = liveScope(edgeScrollDirection = ScopeXEdgeScrollDirection.Left)
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.Escape(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+                edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+                quitConfirmationActive = true,
+                systemMessage = QUIT_CONFIRMATION_MESSAGE,
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.ShowMessage(QUIT_CONFIRMATION_MESSAGE),
+                ScopeXEffectCommand.StartQuitConfirmationTimer(DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS),
+            ),
+            transition.effects,
+        )
     }
 
     @Test
