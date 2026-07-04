@@ -4,6 +4,8 @@ const val DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS: Long = 500L
 const val DEFAULT_EDGE_ZONE_SIZE: Float = 64f
 const val DEFAULT_INPUT_CACHE_ACTIVE_LIMIT: Int = 50
 const val DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS: Long = 2_000L
+const val ASR_FAILURE_MESSAGE: String = "Speech recognition failed"
+const val MICROPHONE_PERMISSION_DENIED_MESSAGE: String = "Microphone permission needed on phone"
 const val QUIT_CONFIRMATION_MESSAGE: String = "Double click again to quit ScopeX"
 
 enum class ScopeXInputSource {
@@ -154,6 +156,10 @@ sealed interface ScopeXEvent {
 
         data object AsrEndpoint : Result
 
+        data object AsrFailure : Result
+
+        data object MicrophonePermissionDenied : Result
+
         data class CrosshairMoved(
             val crosshairContentPoint: FloatPoint,
             val dominantMovementAxis: ScopeXMovementAxis,
@@ -250,6 +256,10 @@ sealed interface ScopeXEffectCommand {
 
     data object FinishAsr : ScopeXEffectCommand
 
+    data object AbortAsr : ScopeXEffectCommand
+
+    data object ShowPermissionRoute : ScopeXEffectCommand
+
     data object ShowClipboardImportBadge : ScopeXEffectCommand
 
     data object HideClipboardImportBadge : ScopeXEffectCommand
@@ -319,6 +329,18 @@ object ScopeXReducer {
             event == ScopeXEvent.Timer.LongSilenceTimeout ||
                 event == ScopeXEvent.Result.AsrEndpoint ->
                 reduceRecordingSegment(state)
+
+            event == ScopeXEvent.Result.AsrFailure ->
+                reduceAsrFailure(state)
+
+            event == ScopeXEvent.Result.MicrophonePermissionDenied ->
+                ScopeXTransition(
+                    state,
+                    listOf(
+                        ScopeXEffectCommand.ShowMessage(MICROPHONE_PERMISSION_DENIED_MESSAGE),
+                        ScopeXEffectCommand.ShowPermissionRoute,
+                    ),
+                )
 
             event is ScopeXEvent.Result.AppendInputCacheEntry ->
                 ScopeXTransition(state.withInputCache(state.inputCache.appendEntry(event.text)))
@@ -496,10 +518,13 @@ object ScopeXReducer {
         state: ScopeXInteractionState.Recording,
         event: ScopeXEvent.Canonical,
     ): ScopeXTransition {
+        if (event is ScopeXEvent.Canonical.Escape) {
+            return reduceRecordingEscape(state.copy(sourceLock = state.sourceLock.acquire(event.source)))
+        }
+
         if (event !is ScopeXEvent.Canonical.FinishRecording) {
             return ScopeXTransition(state)
         }
-
         val recording = state
             .copy(sourceLock = state.sourceLock.acquire(event.source))
             .commitNewLineBuffer()
@@ -515,6 +540,41 @@ object ScopeXReducer {
         }
 
         return ScopeXTransition(recording.toInputCachePanelOpen(inputCache), effects)
+    }
+
+    private fun reduceRecordingEscape(
+        state: ScopeXInteractionState.Recording,
+    ): ScopeXTransition {
+        val inputCache = state.preRecordingInputCache
+        val effects = listOf(ScopeXEffectCommand.AbortAsr, ScopeXEffectCommand.HideMicIcon)
+
+        if (inputCache.entries.isEmpty()) {
+            return ScopeXTransition(state.toLiveScope(inputCache), effects)
+        }
+
+        return ScopeXTransition(state.toInputCachePanelOpen(inputCache), effects)
+    }
+
+    private fun reduceAsrFailure(state: ScopeXInteractionState): ScopeXTransition {
+        if (state !is ScopeXInteractionState.Recording) {
+            return ScopeXTransition(state)
+        }
+
+        val inputCache = if (state.savedLineCount > 0) {
+            state.inputCache.highlightTailOrNull()
+        } else {
+            state.inputCache.restoreHighlightFrom(state.preRecordingInputCache)
+        }
+        val effects = listOf(
+            ScopeXEffectCommand.HideMicIcon,
+            ScopeXEffectCommand.ShowMessage(ASR_FAILURE_MESSAGE),
+        )
+
+        if (inputCache.entries.isEmpty()) {
+            return ScopeXTransition(state.toLiveScope(inputCache), effects)
+        }
+
+        return ScopeXTransition(state.toInputCachePanelOpen(inputCache), effects)
     }
 
     private fun reduceCrosshairMoved(

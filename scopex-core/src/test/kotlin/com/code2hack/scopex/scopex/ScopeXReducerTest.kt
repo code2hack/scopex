@@ -1014,6 +1014,167 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun recordingEscapeRollsBackCommittedSessionLinesAndRestoresPreRecordingPanelHighlight() {
+        val preRecordingInputCache = ScopeXInputCache(
+            entries = listOf("first", "second"),
+            highlightedIndex = 0,
+        )
+        val state = recording(
+            inputCache = preRecordingInputCache.copy(
+                entries = listOf("first", "second", "session-1", "session-2"),
+            ),
+            preRecordingInputCache = preRecordingInputCache,
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = "unsaved",
+                partialText = " draft",
+            ),
+            savedLineCount = 2,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.Escape(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = preRecordingInputCache,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.AbortAsr, ScopeXEffectCommand.HideMicIcon),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun recordingEscapeWithEmptyPreCacheClosesPanelAndUnfreezesScope() {
+        val state = recording(
+            inputCache = ScopeXInputCache(entries = listOf("session")),
+            preRecordingInputCache = ScopeXInputCache(),
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = "unsaved",
+                partialText = " draft",
+            ),
+            savedLineCount = 1,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.Escape(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.AbortAsr, ScopeXEffectCommand.HideMicIcon),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun asrFailureKeepsInputCachePanelOpenWhenCacheEntriesRemain() {
+        val inputCache = ScopeXInputCache(
+            entries = listOf("old"),
+            highlightedIndex = 0,
+        )
+        val state = recording(
+            inputCache = inputCache,
+            preRecordingInputCache = inputCache,
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = "unsaved",
+                partialText = " draft",
+            ),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.AsrFailure,
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = inputCache,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.HideMicIcon,
+                ScopeXEffectCommand.ShowMessage(ASR_FAILURE_MESSAGE),
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun asrFailureClosesPanelWhenCacheIsEmpty() {
+        val state = recording(
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = "unsaved",
+                partialText = " draft",
+            ),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.AsrFailure,
+        )
+
+        assertEquals(
+            liveScope(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.HideMicIcon,
+                ScopeXEffectCommand.ShowMessage(ASR_FAILURE_MESSAGE),
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun microphonePermissionDenialShowsGlassesMessageAndRoutesCompanion() {
+        val state = liveScope()
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.MicrophonePermissionDenied,
+        )
+
+        assertEquals(state, transition.state)
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.ShowMessage(MICROPHONE_PERMISSION_DENIED_MESSAGE),
+                ScopeXEffectCommand.ShowPermissionRoute,
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
     fun quitConfirmationTimeoutClearsConfirmationState() {
         val state = liveScope(
             quitConfirmationActive = true,
