@@ -908,6 +908,53 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun cacheLineDisplaysTruncateNonHighlightedLongLinesToTail() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(
+                entries = listOf("0123456789abcdefghijklmnopqrstuvwxyz", "focus"),
+                highlightedIndex = 1,
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                ScopeXCacheLineDisplay(text = "uvwxyz"),
+                ScopeXCacheLineDisplay(text = "focus"),
+            ),
+            state.cacheLineDisplays(visibleCharacters = 6),
+        )
+    }
+
+    @Test
+    fun cacheLineScrollTimerAdvancesHighlightedLongLineRecurrently() {
+        val longLine = "0123456789abcdefghijklmnopqrstuvwxyz"
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(entries = listOf(longLine), highlightedIndex = 0),
+        )
+
+        assertEquals(
+            listOf(ScopeXCacheLineDisplay(text = "012345", scrollOffset = 0)),
+            state.cacheLineDisplays(visibleCharacters = 6),
+        )
+
+        val scrolled = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Timer.CacheLineScrollDelay,
+        )
+
+        assertEquals(
+            state.copy(highlightedLineScrollOffset = 1),
+            scrolled.state,
+        )
+        assertEquals(
+            listOf(ScopeXCacheLineDisplay(text = "123456", scrollOffset = 1)),
+            (scrolled.state as ScopeXInteractionState.InputCachePanelOpen)
+                .cacheLineDisplays(visibleCharacters = 6),
+        )
+        assertEquals(emptyList(), scrolled.effects)
+    }
+
+    @Test
     fun configurationEventOverridesInputCacheActiveLimitAndEvictsHead() {
         val state = liveScope(
             inputCache = ScopeXInputCache(

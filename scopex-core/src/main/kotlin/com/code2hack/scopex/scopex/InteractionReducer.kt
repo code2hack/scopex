@@ -1,6 +1,7 @@
 package com.code2hack.scopex.scopex
 
 const val DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS: Long = 500L
+const val DEFAULT_CACHE_LINE_VISIBLE_CHARACTERS: Int = 24
 const val DEFAULT_EDGE_ZONE_SIZE: Float = 64f
 const val DEFAULT_INPUT_CACHE_ACTIVE_LIMIT: Int = 50
 const val DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS: Long = 2_000L
@@ -54,6 +55,11 @@ data class ScopeXInputCache(
 data class ScopeXNewLineBuffer(
     val confirmedText: String = "",
     val partialText: String? = null,
+)
+
+data class ScopeXCacheLineDisplay(
+    val text: String,
+    val scrollOffset: Int = 0,
 )
 
 sealed interface ScopeXInteractionState {
@@ -199,6 +205,7 @@ sealed interface ScopeXEvent {
 
     sealed interface Timer : ScopeXEvent {
         data object ActiveSourceIdleTimeout : Timer
+        data object CacheLineScrollDelay : Timer
         data object QuitConfirmationTimeout : Timer
         data object LongSilenceTimeout : Timer
     }
@@ -357,6 +364,9 @@ object ScopeXReducer {
                         )
                     else -> ScopeXTransition(state)
                 }
+
+            event == ScopeXEvent.Timer.CacheLineScrollDelay ->
+                reduceCacheLineScrollDelay(state)
 
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
@@ -608,6 +618,28 @@ object ScopeXReducer {
         return ScopeXTransition(nextState)
     }
 
+    private fun reduceCacheLineScrollDelay(state: ScopeXInteractionState): ScopeXTransition {
+        if (state !is ScopeXInteractionState.InputCachePanelOpen) {
+            return ScopeXTransition(state)
+        }
+
+        val highlightedIndex = state.inputCache.highlightedIndex ?: return ScopeXTransition(state)
+        val highlightedText = state.inputCache.entries.getOrNull(highlightedIndex)
+            ?: return ScopeXTransition(state)
+        if (highlightedText.length <= DEFAULT_CACHE_LINE_VISIBLE_CHARACTERS) {
+            return ScopeXTransition(state.copy(highlightedLineScrollOffset = 0))
+        }
+
+        return ScopeXTransition(
+            state.copy(
+                highlightedLineScrollOffset = Math.floorMod(
+                    state.highlightedLineScrollOffset + 1,
+                    highlightedText.length,
+                ),
+            ),
+        )
+    }
+
     private fun reduceRecordingSegment(state: ScopeXInteractionState): ScopeXTransition =
         when (state) {
             is ScopeXInteractionState.Recording ->
@@ -825,6 +857,27 @@ private fun ScopeXInputCache.removeEntryAt(index: Int): ScopeXInputCache {
     }
 
     return copy(entries = nextEntries, highlightedIndex = nextHighlightedIndex)
+}
+
+fun ScopeXInteractionState.InputCachePanelOpen.cacheLineDisplays(
+    visibleCharacters: Int = DEFAULT_CACHE_LINE_VISIBLE_CHARACTERS,
+): List<ScopeXCacheLineDisplay> {
+    require(visibleCharacters > 0) { "visible cache line characters must be positive" }
+
+    return inputCache.entries.mapIndexed { index, entry ->
+        val highlighted = index == inputCache.highlightedIndex
+        when {
+            entry.length <= visibleCharacters -> ScopeXCacheLineDisplay(entry)
+            highlighted -> {
+                val offset = Math.floorMod(highlightedLineScrollOffset, entry.length)
+                ScopeXCacheLineDisplay(
+                    text = (entry + entry).substring(offset, offset + visibleCharacters),
+                    scrollOffset = offset,
+                )
+            }
+            else -> ScopeXCacheLineDisplay(entry.takeLast(visibleCharacters))
+        }
+    }
 }
 
 private fun reduceClipboardImportConfiguration(
