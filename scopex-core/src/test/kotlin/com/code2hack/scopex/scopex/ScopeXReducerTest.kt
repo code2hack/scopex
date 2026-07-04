@@ -64,6 +64,43 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun competingSourceTouchActionsAreRejectedWithoutEffects() {
+        val state = liveScope(
+            sourceLock = ScopeXSourceLock(
+                activeSource = ScopeXInputSource.Glasses,
+                ownsActions = true,
+            ),
+        )
+        val scrollDelta = FloatPoint(0f, -120f)
+        val actions: List<ScopeXEvent.Canonical> = listOf(
+            ScopeXEvent.Canonical.HoldCrosshair(ScopeXInputSource.Remote),
+            ScopeXEvent.Canonical.MoveHeldCrosshair(ScopeXInputSource.Remote),
+            ScopeXEvent.Canonical.ScrollAtCrosshair(ScopeXInputSource.Remote, scrollDelta),
+            ScopeXEvent.Canonical.ZoomAtCrosshair(ScopeXInputSource.Remote, 1.25f),
+        )
+
+        for (event in actions) {
+            val transition = ScopeXReducer.reduce(state, event)
+
+            assertEquals(state, transition.state)
+            assertEquals(emptyList(), transition.effects)
+        }
+    }
+
+    @Test
+    fun canonicalTouchActionInNonLiveScopeStateIsNoOp() {
+        val state = ScopeXInteractionState.Recording()
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.HoldCrosshair(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(state, transition.state)
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
     fun competingSourceClickIsRejectedWithoutEffects() {
         val state = liveScope(
             sourceLock = ScopeXSourceLock(
