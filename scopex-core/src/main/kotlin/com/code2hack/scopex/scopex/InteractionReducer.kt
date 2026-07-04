@@ -152,6 +152,22 @@ sealed interface ScopeXEvent {
                 require(size > 0f) { "edge zone size must be positive" }
             }
         }
+
+        data class SetInputCacheActiveLimit(
+            val limit: Int,
+        ) : Configuration {
+            init {
+                require(limit > 0) { "input cache active limit must be positive" }
+            }
+        }
+
+        data class SetClipboardImportOptedIn(
+            val enabled: Boolean,
+        ) : Configuration
+
+        data class SetScopeXSessionActive(
+            val active: Boolean,
+        ) : Configuration
     }
 }
 
@@ -194,6 +210,10 @@ sealed interface ScopeXEffectCommand {
 
     data object ShowEmptyInputCachePrompt : ScopeXEffectCommand
 
+    data object ShowClipboardImportBadge : ScopeXEffectCommand
+
+    data object HideClipboardImportBadge : ScopeXEffectCommand
+
     data class StartQuitConfirmationTimer(
         val timeoutMillis: Long,
     ) : ScopeXEffectCommand
@@ -212,6 +232,19 @@ object ScopeXReducer {
         event: ScopeXEvent,
     ): ScopeXTransition =
         when {
+            event is ScopeXEvent.Configuration.SetInputCacheActiveLimit ->
+                ScopeXTransition(state.withInputCache(state.inputCache.withActiveLimit(event.limit)))
+
+            event is ScopeXEvent.Configuration.SetClipboardImportOptedIn ->
+                reduceClipboardImportConfiguration(state) {
+                    it.copy(clipboardImportOptedIn = event.enabled)
+                }
+
+            event is ScopeXEvent.Configuration.SetScopeXSessionActive ->
+                reduceClipboardImportConfiguration(state) {
+                    it.copy(sessionActive = event.active)
+                }
+
             event is ScopeXEvent.Configuration.SetActiveSourceIdleTimeout ->
                 ScopeXTransition(
                     state.withSourceLock(
@@ -405,6 +438,36 @@ private fun ScopeXInputCache.appendEntry(text: String): ScopeXInputCache {
         ?.takeIf { it in boundedEntries.indices }
 
     return copy(entries = boundedEntries, highlightedIndex = nextHighlightedIndex)
+}
+
+private fun ScopeXInputCache.withActiveLimit(activeLimit: Int): ScopeXInputCache {
+    val droppedCount = (entries.size - activeLimit).coerceAtLeast(0)
+    val boundedEntries = entries.drop(droppedCount)
+    val nextHighlightedIndex = highlightedIndex
+        ?.minus(droppedCount)
+        ?.takeIf { it in boundedEntries.indices }
+
+    return copy(
+        entries = boundedEntries,
+        activeLimit = activeLimit,
+        highlightedIndex = nextHighlightedIndex,
+    )
+}
+
+private fun reduceClipboardImportConfiguration(
+    state: ScopeXInteractionState,
+    configure: (ScopeXInputCache) -> ScopeXInputCache,
+): ScopeXTransition {
+    val wasActive = state.inputCache.clipboardImportActive
+    val nextState = state.withInputCache(configure(state.inputCache))
+    val isActive = nextState.inputCache.clipboardImportActive
+    val effects = when {
+        !wasActive && isActive -> listOf(ScopeXEffectCommand.ShowClipboardImportBadge)
+        wasActive && !isActive -> listOf(ScopeXEffectCommand.HideClipboardImportBadge)
+        else -> emptyList()
+    }
+
+    return ScopeXTransition(nextState, effects)
 }
 
 private fun ScopeXInteractionState.LiveScope.toInputCachePanelOpen(): ScopeXInteractionState.InputCachePanelOpen =

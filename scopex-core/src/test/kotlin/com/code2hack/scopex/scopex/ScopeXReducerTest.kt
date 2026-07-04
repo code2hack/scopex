@@ -671,6 +671,93 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun configurationEventOverridesInputCacheActiveLimitAndEvictsHead() {
+        val state = liveScope(
+            inputCache = ScopeXInputCache(
+                entries = listOf("first", "second", "third"),
+                activeLimit = 3,
+                highlightedIndex = 2,
+            ),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Configuration.SetInputCacheActiveLimit(2),
+        )
+
+        assertEquals(
+            state.copy(
+                inputCache = ScopeXInputCache(
+                    entries = listOf("second", "third"),
+                    activeLimit = 2,
+                    highlightedIndex = 1,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun configurationEventRejectsNonPositiveInputCacheActiveLimit() {
+        assertFailsWith<IllegalArgumentException> {
+            ScopeXEvent.Configuration.SetInputCacheActiveLimit(0)
+        }
+    }
+
+    @Test
+    fun clipboardImportIsActiveOnlyWhenOptedInAndSessionActive() {
+        val optedIn = ScopeXReducer.reduce(
+            state = liveScope(),
+            event = ScopeXEvent.Configuration.SetClipboardImportOptedIn(true),
+        )
+
+        assertEquals(false, optedIn.state.inputCache.clipboardImportActive)
+        assertEquals(emptyList(), optedIn.effects)
+
+        val active = ScopeXReducer.reduce(
+            state = optedIn.state,
+            event = ScopeXEvent.Configuration.SetScopeXSessionActive(true),
+        )
+
+        assertEquals(true, active.state.inputCache.clipboardImportActive)
+        assertEquals(listOf(ScopeXEffectCommand.ShowClipboardImportBadge), active.effects)
+
+        val inactive = ScopeXReducer.reduce(
+            state = active.state,
+            event = ScopeXEvent.Configuration.SetScopeXSessionActive(false),
+        )
+
+        assertEquals(false, inactive.state.inputCache.clipboardImportActive)
+        assertEquals(listOf(ScopeXEffectCommand.HideClipboardImportBadge), inactive.effects)
+    }
+
+    @Test
+    fun clipboardImportOptOutHidesBadgeOnlyWhenItWasActive() {
+        val inactiveOptOut = ScopeXReducer.reduce(
+            state = liveScope(),
+            event = ScopeXEvent.Configuration.SetClipboardImportOptedIn(false),
+        )
+
+        assertEquals(false, inactiveOptOut.state.inputCache.clipboardImportActive)
+        assertEquals(emptyList(), inactiveOptOut.effects)
+
+        val activeState = liveScope(
+            inputCache = ScopeXInputCache(
+                clipboardImportOptedIn = true,
+                sessionActive = true,
+            ),
+        )
+        val activeOptOut = ScopeXReducer.reduce(
+            state = activeState,
+            event = ScopeXEvent.Configuration.SetClipboardImportOptedIn(false),
+        )
+
+        assertEquals(false, activeOptOut.state.inputCache.clipboardImportActive)
+        assertEquals(listOf(ScopeXEffectCommand.HideClipboardImportBadge), activeOptOut.effects)
+    }
+
+    @Test
     fun quitConfirmationTimeoutClearsConfirmationState() {
         val state = liveScope(
             quitConfirmationActive = true,
