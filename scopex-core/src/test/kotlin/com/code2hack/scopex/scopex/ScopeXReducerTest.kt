@@ -194,6 +194,95 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun edgeScrollStartsWhenCrosshairEntersEdgeZoneAndStopsWhenItLeaves() {
+        val state = liveScope()
+
+        val entered = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.CrosshairMoved(
+                crosshairContentPoint = FloatPoint(50f, 400f),
+                dominantMovementAxis = ScopeXMovementAxis.Horizontal,
+            ),
+        )
+
+        assertEquals(
+            liveScope(
+                crosshairContentPoint = FloatPoint(50f, 400f),
+                edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+            ),
+            entered.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.StartEdgeScroll(ScopeXEdgeScrollDirection.Left)),
+            entered.effects,
+        )
+
+        val left = ScopeXReducer.reduce(
+            state = entered.state,
+            event = ScopeXEvent.Result.CrosshairMoved(
+                crosshairContentPoint = FloatPoint(500f, 400f),
+                dominantMovementAxis = ScopeXMovementAxis.Horizontal,
+            ),
+        )
+
+        assertEquals(liveScope(crosshairContentPoint = FloatPoint(500f, 400f)), left.state)
+        assertEquals(listOf(ScopeXEffectCommand.StopEdgeScroll), left.effects)
+    }
+
+    @Test
+    fun cornerEdgeScrollUsesLastDominantMovementAxis() {
+        val state = liveScope()
+
+        val horizontal = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.CrosshairMoved(
+                crosshairContentPoint = FloatPoint(50f, 50f),
+                dominantMovementAxis = ScopeXMovementAxis.Horizontal,
+            ),
+        )
+
+        assertEquals(
+            liveScope(
+                crosshairContentPoint = FloatPoint(50f, 50f),
+                edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+            ),
+            horizontal.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.StartEdgeScroll(ScopeXEdgeScrollDirection.Left)),
+            horizontal.effects,
+        )
+
+        val vertical = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.CrosshairMoved(
+                crosshairContentPoint = FloatPoint(50f, 50f),
+                dominantMovementAxis = ScopeXMovementAxis.Vertical,
+            ),
+        )
+
+        assertEquals(
+            liveScope(
+                crosshairContentPoint = FloatPoint(50f, 50f),
+                edgeScrollDirection = ScopeXEdgeScrollDirection.Up,
+                lastDominantMovementAxis = ScopeXMovementAxis.Vertical,
+            ),
+            vertical.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.StartEdgeScroll(ScopeXEdgeScrollDirection.Up)),
+            vertical.effects,
+        )
+    }
+
+    @Test
+    fun configurationEventRejectsNonPositiveEdgeZoneSize() {
+        assertFailsWith<IllegalArgumentException> {
+            ScopeXEvent.Configuration.SetEdgeZoneSize(0f)
+        }
+    }
+
+    @Test
     fun sourceCanReacquireAfterIdleTimeoutRelease() {
         val state = liveScope(
             sourceLock = ScopeXSourceLock(
@@ -228,9 +317,16 @@ class ScopeXReducerTest {
 
     private fun liveScope(
         sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
+        edgeScrollDirection: ScopeXEdgeScrollDirection? = null,
+        lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        edgeZoneSize: Float = 100f,
     ) = ScopeXInteractionState.LiveScope(
         crosshairContentPoint = crosshairContentPoint,
         logicalDisplaySize = logicalDisplaySize,
         sourceLock = sourceLock,
+        edgeScrollDirection = edgeScrollDirection,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
     )
 }

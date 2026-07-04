@@ -1,11 +1,24 @@
 package com.code2hack.scopex.scopex
 
 const val DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS: Long = 500L
+const val DEFAULT_EDGE_ZONE_SIZE: Float = 64f
 
 enum class ScopeXInputSource {
     Glasses,
     Remote,
     Debug,
+}
+
+enum class ScopeXMovementAxis {
+    Horizontal,
+    Vertical,
+}
+
+enum class ScopeXEdgeScrollDirection {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 data class ScopeXSourceLock(
@@ -20,6 +33,9 @@ sealed interface ScopeXInteractionState {
     data class LiveScope(
         val crosshairContentPoint: FloatPoint,
         val logicalDisplaySize: IntSize,
+        val edgeScrollDirection: ScopeXEdgeScrollDirection? = null,
+        val lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        val edgeZoneSize: Float = DEFAULT_EDGE_ZONE_SIZE,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
     ) : ScopeXInteractionState
 
@@ -59,7 +75,12 @@ sealed interface ScopeXEvent {
         ) : Canonical
     }
 
-    sealed interface Result : ScopeXEvent
+    sealed interface Result : ScopeXEvent {
+        data class CrosshairMoved(
+            val crosshairContentPoint: FloatPoint,
+            val dominantMovementAxis: ScopeXMovementAxis,
+        ) : Result
+    }
 
     sealed interface Timer : ScopeXEvent {
         data object ActiveSourceIdleTimeout : Timer
@@ -73,6 +94,14 @@ sealed interface ScopeXEvent {
                 require(timeoutMillis > 0) {
                     "active source idle timeout must be positive"
                 }
+            }
+        }
+
+        data class SetEdgeZoneSize(
+            val size: Float,
+        ) : Configuration {
+            init {
+                require(size > 0f) { "edge zone size must be positive" }
             }
         }
     }
@@ -100,6 +129,12 @@ sealed interface ScopeXEffectCommand {
         val crosshairContentPoint: FloatPoint,
         val scaleFactor: Float,
     ) : ScopeXEffectCommand
+
+    data class StartEdgeScroll(
+        val direction: ScopeXEdgeScrollDirection,
+    ) : ScopeXEffectCommand
+
+    data object StopEdgeScroll : ScopeXEffectCommand
 }
 
 data class ScopeXTransition(
@@ -122,8 +157,18 @@ object ScopeXReducer {
                     ),
                 )
 
+            event is ScopeXEvent.Configuration.SetEdgeZoneSize ->
+                when (state) {
+                    is ScopeXInteractionState.LiveScope ->
+                        ScopeXTransition(state.copy(edgeZoneSize = event.size))
+                    else -> ScopeXTransition(state)
+                }
+
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
+
+            event is ScopeXEvent.Result.CrosshairMoved ->
+                reduceCrosshairMoved(state, event)
 
             event is ScopeXEvent.Canonical ->
                 reduceLiveScopeCanonical(state, event)
@@ -159,6 +204,34 @@ object ScopeXReducer {
 
         return ScopeXTransition(nextState, listOf(effect))
     }
+
+    private fun reduceCrosshairMoved(
+        state: ScopeXInteractionState,
+        event: ScopeXEvent.Result.CrosshairMoved,
+    ): ScopeXTransition {
+        if (state !is ScopeXInteractionState.LiveScope) {
+            return ScopeXTransition(state)
+        }
+
+        val direction = edgeScrollDirection(
+            point = event.crosshairContentPoint,
+            logicalDisplaySize = state.logicalDisplaySize,
+            edgeZoneSize = state.edgeZoneSize,
+            dominantMovementAxis = event.dominantMovementAxis,
+        )
+        val nextState = state.copy(
+            crosshairContentPoint = event.crosshairContentPoint,
+            edgeScrollDirection = direction,
+            lastDominantMovementAxis = event.dominantMovementAxis,
+        )
+        val effects = when {
+            state.edgeScrollDirection == direction -> emptyList()
+            direction == null -> listOf(ScopeXEffectCommand.StopEdgeScroll)
+            else -> listOf(ScopeXEffectCommand.StartEdgeScroll(direction))
+        }
+
+        return ScopeXTransition(nextState, effects)
+    }
 }
 
 private fun ScopeXSourceLock.accepts(source: ScopeXInputSource): Boolean =
@@ -178,3 +251,28 @@ private fun ScopeXInteractionState.withSourceLock(
         is ScopeXInteractionState.Recording -> copy(sourceLock = sourceLock)
         is ScopeXInteractionState.InputCachePanelOpen -> copy(sourceLock = sourceLock)
     }
+
+private fun edgeScrollDirection(
+    point: FloatPoint,
+    logicalDisplaySize: IntSize,
+    edgeZoneSize: Float,
+    dominantMovementAxis: ScopeXMovementAxis,
+): ScopeXEdgeScrollDirection? {
+    val horizontal = when {
+        point.x <= edgeZoneSize -> ScopeXEdgeScrollDirection.Left
+        point.x >= logicalDisplaySize.width - edgeZoneSize -> ScopeXEdgeScrollDirection.Right
+        else -> null
+    }
+    val vertical = when {
+        point.y <= edgeZoneSize -> ScopeXEdgeScrollDirection.Up
+        point.y >= logicalDisplaySize.height - edgeZoneSize -> ScopeXEdgeScrollDirection.Down
+        else -> null
+    }
+
+    return when {
+        horizontal != null && vertical != null ->
+            if (dominantMovementAxis == ScopeXMovementAxis.Horizontal) horizontal else vertical
+        horizontal != null -> horizontal
+        else -> vertical
+    }
+}
