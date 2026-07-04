@@ -19,6 +19,7 @@ sealed interface ScopeXInteractionState {
 
     data class LiveScope(
         val crosshairContentPoint: FloatPoint,
+        val logicalDisplaySize: IntSize,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
     ) : ScopeXInteractionState
 
@@ -37,6 +38,24 @@ sealed interface ScopeXEvent {
 
         data class ClickCrosshair(
             override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class HoldCrosshair(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class MoveHeldCrosshair(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class ScrollAtCrosshair(
+            override val source: ScopeXInputSource,
+            val delta: FloatPoint,
+        ) : Canonical
+
+        data class ZoomAtCrosshair(
+            override val source: ScopeXInputSource,
+            val scaleFactor: Float,
         ) : Canonical
     }
 
@@ -63,6 +82,24 @@ sealed interface ScopeXEffectCommand {
     data class InjectClick(
         val crosshairContentPoint: FloatPoint,
     ) : ScopeXEffectCommand
+
+    data class InjectLongPress(
+        val crosshairContentPoint: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectHeldMove(
+        val crosshairContentPoint: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectScroll(
+        val crosshairContentPoint: FloatPoint,
+        val delta: FloatPoint,
+    ) : ScopeXEffectCommand
+
+    data class InjectZoom(
+        val crosshairContentPoint: FloatPoint,
+        val scaleFactor: Float,
+    ) : ScopeXEffectCommand
 }
 
 data class ScopeXTransition(
@@ -88,32 +125,39 @@ object ScopeXReducer {
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
 
-            event is ScopeXEvent.Canonical.ClickCrosshair ->
-                reduceClickCrosshair(state, event)
+            event is ScopeXEvent.Canonical ->
+                reduceLiveScopeCanonical(state, event)
 
             else -> ScopeXTransition(state)
         }
 
-    private fun reduceClickCrosshair(
+    private fun reduceLiveScopeCanonical(
         state: ScopeXInteractionState,
-        event: ScopeXEvent.Canonical.ClickCrosshair,
+        event: ScopeXEvent.Canonical,
     ): ScopeXTransition {
         if (!state.sourceLock.accepts(event.source)) {
             return ScopeXTransition(state)
         }
 
         val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
-        return when (nextState) {
-            is ScopeXInteractionState.LiveScope ->
-                ScopeXTransition(
-                    state = nextState,
-                    effects = listOf(
-                        ScopeXEffectCommand.InjectClick(nextState.crosshairContentPoint),
-                    ),
-                )
-
-            else -> ScopeXTransition(state)
+        if (nextState !is ScopeXInteractionState.LiveScope) {
+            return ScopeXTransition(state)
         }
+
+        val effect = when (event) {
+            is ScopeXEvent.Canonical.ClickCrosshair ->
+                ScopeXEffectCommand.InjectClick(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.HoldCrosshair ->
+                ScopeXEffectCommand.InjectLongPress(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.MoveHeldCrosshair ->
+                ScopeXEffectCommand.InjectHeldMove(nextState.crosshairContentPoint)
+            is ScopeXEvent.Canonical.ScrollAtCrosshair ->
+                ScopeXEffectCommand.InjectScroll(nextState.crosshairContentPoint, event.delta)
+            is ScopeXEvent.Canonical.ZoomAtCrosshair ->
+                ScopeXEffectCommand.InjectZoom(nextState.crosshairContentPoint, event.scaleFactor)
+        }
+
+        return ScopeXTransition(nextState, listOf(effect))
     }
 }
 

@@ -6,6 +6,7 @@ import kotlin.test.assertFailsWith
 
 class ScopeXReducerTest {
     private val crosshairContentPoint = FloatPoint(100f, 200f)
+    private val logicalDisplaySize = IntSize(1000, 800)
 
     @Test
     fun clickCrosshairAcquiresFirstActiveSourceAndEmitsInjectClickAtCrosshair() {
@@ -29,6 +30,37 @@ class ScopeXReducerTest {
             listOf(ScopeXEffectCommand.InjectClick(crosshairContentPoint)),
             transition.effects,
         )
+    }
+
+    @Test
+    fun liveScopeTouchActionsEmitPhoneSideEffectsAtCrosshair() {
+        val state = liveScope()
+        val scrollDelta = FloatPoint(0f, -120f)
+        val actions = listOf(
+            ScopeXEvent.Canonical.HoldCrosshair(ScopeXInputSource.Glasses) to
+                ScopeXEffectCommand.InjectLongPress(crosshairContentPoint),
+            ScopeXEvent.Canonical.MoveHeldCrosshair(ScopeXInputSource.Glasses) to
+                ScopeXEffectCommand.InjectHeldMove(crosshairContentPoint),
+            ScopeXEvent.Canonical.ScrollAtCrosshair(ScopeXInputSource.Glasses, scrollDelta) to
+                ScopeXEffectCommand.InjectScroll(crosshairContentPoint, scrollDelta),
+            ScopeXEvent.Canonical.ZoomAtCrosshair(ScopeXInputSource.Glasses, 1.25f) to
+                ScopeXEffectCommand.InjectZoom(crosshairContentPoint, 1.25f),
+        )
+
+        for ((event, effect) in actions) {
+            val transition = ScopeXReducer.reduce(state, event)
+
+            assertEquals(
+                state.copy(
+                    sourceLock = ScopeXSourceLock(
+                        activeSource = ScopeXInputSource.Glasses,
+                        ownsActions = true,
+                    ),
+                ),
+                transition.state,
+            )
+            assertEquals(listOf(effect), transition.effects)
+        }
     }
 
     @Test
@@ -161,6 +193,7 @@ class ScopeXReducerTest {
         sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
     ) = ScopeXInteractionState.LiveScope(
         crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
         sourceLock = sourceLock,
     )
 }
