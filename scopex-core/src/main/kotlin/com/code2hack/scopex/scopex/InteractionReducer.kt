@@ -94,7 +94,16 @@ sealed interface ScopeXInteractionState {
         val edgeZoneSize: Float = DEFAULT_EDGE_ZONE_SIZE,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
         override val inputCache: ScopeXInputCache = ScopeXInputCache(),
-    ) : ScopeXInteractionState
+        val frozenCrosshairTargetHasEditableFocus: Boolean = false,
+        val pendingInsertedCacheIndex: Int? = null,
+        val highlightedLineScrollOffset: Int = 0,
+    ) : ScopeXInteractionState {
+        init {
+            require(highlightedLineScrollOffset >= 0) {
+                "highlighted cache line scroll offset must be non-negative"
+            }
+        }
+    }
 }
 
 sealed interface ScopeXEvent {
@@ -125,6 +134,11 @@ sealed interface ScopeXEvent {
 
         data class ToggleInputCache(
             override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class MoveCacheHighlight(
+            override val source: ScopeXInputSource,
+            val offset: Int,
         ) : Canonical
 
         data class StartRecording(
@@ -384,13 +398,11 @@ object ScopeXReducer {
             return reduceRecordingCanonical(state, event)
         }
 
-        val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
-        if (nextState is ScopeXInteractionState.InputCachePanelOpen &&
-            event is ScopeXEvent.Canonical.ToggleInputCache
-        ) {
-            return ScopeXTransition(nextState.toLiveScope())
+        if (state is ScopeXInteractionState.InputCachePanelOpen) {
+            return reduceInputCachePanelCanonical(state, event)
         }
 
+        val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
         if (nextState !is ScopeXInteractionState.LiveScope) {
             return ScopeXTransition(state)
         }
@@ -457,11 +469,31 @@ object ScopeXReducer {
                 )
             }
             is ScopeXEvent.Canonical.StartRecording,
+            is ScopeXEvent.Canonical.MoveCacheHighlight,
             is ScopeXEvent.Canonical.FinishRecording -> return ScopeXTransition(state)
         }
 
         return ScopeXTransition(nextState, listOf(effect))
     }
+
+    private fun reduceInputCachePanelCanonical(
+        state: ScopeXInteractionState.InputCachePanelOpen,
+        event: ScopeXEvent.Canonical,
+    ): ScopeXTransition =
+        when (event) {
+            is ScopeXEvent.Canonical.ToggleInputCache,
+            is ScopeXEvent.Canonical.Escape -> ScopeXTransition(
+                state.copy(sourceLock = state.sourceLock.acquire(event.source)).toLiveScope(),
+            )
+            is ScopeXEvent.Canonical.MoveCacheHighlight -> ScopeXTransition(
+                state.copy(
+                    sourceLock = state.sourceLock.acquire(event.source),
+                    inputCache = state.inputCache.moveHighlight(event.offset),
+                    highlightedLineScrollOffset = 0,
+                ),
+            )
+            else -> ScopeXTransition(state)
+        }
 
     private fun reduceRecordingSegment(state: ScopeXInteractionState): ScopeXTransition =
         when (state) {
@@ -656,6 +688,15 @@ private fun ScopeXInputCache.withActiveLimit(activeLimit: Int): ScopeXInputCache
         activeLimit = activeLimit,
         highlightedIndex = nextHighlightedIndex,
     )
+}
+
+private fun ScopeXInputCache.moveHighlight(offset: Int): ScopeXInputCache {
+    if (entries.isEmpty() || offset == 0) {
+        return this
+    }
+
+    val current = highlightedIndex ?: entries.lastIndex
+    return copy(highlightedIndex = Math.floorMod(current + offset, entries.size))
 }
 
 private fun reduceClipboardImportConfiguration(

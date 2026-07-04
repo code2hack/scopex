@@ -671,6 +671,57 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun moveCacheHighlightWrapsThroughEntriesAndResetsScrollOffset() {
+        val state = inputCachePanelOpen(
+            inputCache = ScopeXInputCache(
+                entries = listOf("old", "middle", "new"),
+                highlightedIndex = 2,
+            ),
+            highlightedLineScrollOffset = 4,
+        )
+
+        val wrappedToHead = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.MoveCacheHighlight(
+                source = ScopeXInputSource.Glasses,
+                offset = 1,
+            ),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = state.inputCache.copy(highlightedIndex = 0),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            wrappedToHead.state,
+        )
+        assertEquals(emptyList(), wrappedToHead.effects)
+
+        val wrappedToTail = ScopeXReducer.reduce(
+            state = wrappedToHead.state,
+            event = ScopeXEvent.Canonical.MoveCacheHighlight(
+                source = ScopeXInputSource.Glasses,
+                offset = -1,
+            ),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = state.inputCache.copy(highlightedIndex = 2),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            wrappedToTail.state,
+        )
+        assertEquals(emptyList(), wrappedToTail.effects)
+    }
+
+    @Test
     fun configurationEventOverridesInputCacheActiveLimitAndEvictsHead() {
         val state = liveScope(
             inputCache = ScopeXInputCache(
@@ -1217,6 +1268,9 @@ class ScopeXReducerTest {
         crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
         lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
         edgeZoneSize: Float = 100f,
+        frozenCrosshairTargetHasEditableFocus: Boolean = false,
+        pendingInsertedCacheIndex: Int? = null,
+        highlightedLineScrollOffset: Int = 0,
     ) = ScopeXInteractionState.InputCachePanelOpen(
         crosshairContentPoint = crosshairContentPoint,
         logicalDisplaySize = logicalDisplaySize,
@@ -1224,6 +1278,9 @@ class ScopeXReducerTest {
         edgeZoneSize = edgeZoneSize,
         sourceLock = sourceLock,
         inputCache = inputCache,
+        frozenCrosshairTargetHasEditableFocus = frozenCrosshairTargetHasEditableFocus,
+        pendingInsertedCacheIndex = pendingInsertedCacheIndex,
+        highlightedLineScrollOffset = highlightedLineScrollOffset,
     )
 
     private fun recording(
