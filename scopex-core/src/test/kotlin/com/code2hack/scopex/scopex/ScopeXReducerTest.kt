@@ -758,6 +758,262 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun startRecordingFromLiveScopeOpensPanelFreezesScopeStartsAsrAndStopsEdgeScroll() {
+        val inputCache = ScopeXInputCache(entries = listOf("old"))
+        val state = liveScope(
+            inputCache = inputCache,
+            edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.StartRecording(ScopeXInputSource.Glasses),
+        )
+
+        val recordingCache = inputCache.copy(highlightedIndex = 0)
+        assertEquals(
+            recording(
+                inputCache = recordingCache,
+                preRecordingInputCache = recordingCache,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(
+                ScopeXEffectCommand.StopEdgeScroll,
+                ScopeXEffectCommand.ShowMicIcon,
+                ScopeXEffectCommand.StartAsr,
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun startRecordingFromInputCachePanelReusesPanelAndPreservesHighlight() {
+        val inputCache = ScopeXInputCache(
+            entries = listOf("first", "second"),
+            highlightedIndex = 0,
+        )
+        val state = inputCachePanelOpen(inputCache = inputCache)
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.StartRecording(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            recording(
+                inputCache = inputCache,
+                preRecordingInputCache = inputCache,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.ShowMicIcon, ScopeXEffectCommand.StartAsr),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun recordingIgnoresInteractionsExceptFinishAndEscape() {
+        val state = recording()
+        val ignoredEvents = listOf(
+            ScopeXEvent.Canonical.ClickCrosshair(ScopeXInputSource.Glasses),
+            ScopeXEvent.Canonical.ToggleInputCache(ScopeXInputSource.Glasses),
+            ScopeXEvent.Canonical.RecenterScope(ScopeXInputSource.Glasses),
+        )
+
+        for (event in ignoredEvents) {
+            val transition = ScopeXReducer.reduce(state, event)
+
+            assertEquals(state, transition.state)
+            assertEquals(emptyList(), transition.effects)
+        }
+    }
+
+    @Test
+    fun asrTranscriptUpdatesConfirmedAndPartialNewLineBuffer() {
+        val state = recording()
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.AsrTranscript(
+                confirmedText = "hello",
+                partialText = " wor",
+            ),
+        )
+
+        assertEquals(
+            state.copy(
+                newLineBuffer = ScopeXNewLineBuffer(
+                    confirmedText = "hello",
+                    partialText = " wor",
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun longSilenceAndAsrEndpointCommitConfirmedTextAndResetBuffer() {
+        val state = recording(
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = " first ",
+                partialText = " ignored",
+            ),
+        )
+
+        val first = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Timer.LongSilenceTimeout,
+        )
+
+        assertEquals(
+            recording(
+                inputCache = ScopeXInputCache(entries = listOf("first")),
+                savedLineCount = 1,
+            ),
+            first.state,
+        )
+        assertEquals(emptyList(), first.effects)
+
+        val secondBuffer = ScopeXReducer.reduce(
+            state = first.state,
+            event = ScopeXEvent.Result.AsrTranscript(confirmedText = "second"),
+        ).state
+        val second = ScopeXReducer.reduce(
+            state = secondBuffer,
+            event = ScopeXEvent.Result.AsrEndpoint,
+        )
+
+        assertEquals(
+            recording(
+                inputCache = ScopeXInputCache(entries = listOf("first", "second")),
+                savedLineCount = 2,
+            ),
+            second.state,
+        )
+        assertEquals(emptyList(), second.effects)
+    }
+
+    @Test
+    fun emptyBuffersAndPartialTextAreNotCommitted() {
+        val state = recording(
+            newLineBuffer = ScopeXNewLineBuffer(
+                confirmedText = "   ",
+                partialText = "draft",
+            ),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Timer.LongSilenceTimeout,
+        )
+
+        assertEquals(recording(), transition.state)
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun finishRecordingCommitsFinalConfirmedTextHidesMicAndHighlightsNewestTail() {
+        val inputCache = ScopeXInputCache(entries = listOf("old"))
+        val state = recording(
+            inputCache = inputCache,
+            preRecordingInputCache = inputCache.copy(highlightedIndex = 0),
+            newLineBuffer = ScopeXNewLineBuffer(confirmedText = " final "),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.FinishRecording(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = ScopeXInputCache(
+                    entries = listOf("old", "final"),
+                    highlightedIndex = 1,
+                ),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.FinishAsr, ScopeXEffectCommand.HideMicIcon),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun finishRecordingWithNoTextRestoresPreRecordingHighlight() {
+        val inputCache = ScopeXInputCache(
+            entries = listOf("first", "second"),
+            highlightedIndex = 0,
+        )
+        val state = recording(
+            inputCache = inputCache,
+            preRecordingInputCache = inputCache,
+            newLineBuffer = ScopeXNewLineBuffer(partialText = "draft"),
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.FinishRecording(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = inputCache,
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.FinishAsr, ScopeXEffectCommand.HideMicIcon),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun finishRecordingWithNoTextAndEmptyCacheClosesPanel() {
+        val state = recording()
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.FinishRecording(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(
+            listOf(ScopeXEffectCommand.FinishAsr, ScopeXEffectCommand.HideMicIcon),
+            transition.effects,
+        )
+    }
+
+    @Test
     fun quitConfirmationTimeoutClearsConfirmationState() {
         val state = liveScope(
             quitConfirmationActive = true,
@@ -807,5 +1063,29 @@ class ScopeXReducerTest {
         edgeZoneSize = edgeZoneSize,
         sourceLock = sourceLock,
         inputCache = inputCache,
+    )
+
+    private fun recording(
+        sourceLock: ScopeXSourceLock = ScopeXSourceLock(
+            activeSource = ScopeXInputSource.Glasses,
+            ownsActions = true,
+        ),
+        inputCache: ScopeXInputCache = ScopeXInputCache(),
+        crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
+        lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        edgeZoneSize: Float = 100f,
+        newLineBuffer: ScopeXNewLineBuffer = ScopeXNewLineBuffer(),
+        savedLineCount: Int = 0,
+        preRecordingInputCache: ScopeXInputCache = ScopeXInputCache(),
+    ) = ScopeXInteractionState.Recording(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache,
+        newLineBuffer = newLineBuffer,
+        savedLineCount = savedLineCount,
+        preRecordingInputCache = preRecordingInputCache,
     )
 }
