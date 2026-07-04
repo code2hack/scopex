@@ -48,6 +48,11 @@ data class ScopeXInputCache(
         get() = clipboardImportOptedIn && sessionActive
 }
 
+data class ScopeXNewLineBuffer(
+    val confirmedText: String = "",
+    val partialText: String? = null,
+)
+
 sealed interface ScopeXInteractionState {
     val sourceLock: ScopeXSourceLock
     val inputCache: ScopeXInputCache
@@ -65,9 +70,20 @@ sealed interface ScopeXInteractionState {
     ) : ScopeXInteractionState
 
     data class Recording(
+        val crosshairContentPoint: FloatPoint = FloatPoint(0f, 0f),
+        val logicalDisplaySize: IntSize = IntSize(1, 1),
+        val lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        val edgeZoneSize: Float = DEFAULT_EDGE_ZONE_SIZE,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
         override val inputCache: ScopeXInputCache = ScopeXInputCache(),
-    ) : ScopeXInteractionState
+        val newLineBuffer: ScopeXNewLineBuffer = ScopeXNewLineBuffer(),
+        val savedLineCount: Int = 0,
+        val preRecordingInputCache: ScopeXInputCache = inputCache,
+    ) : ScopeXInteractionState {
+        init {
+            require(savedLineCount >= 0) { "saved line count must be non-negative" }
+        }
+    }
 
     data class InputCachePanelOpen(
         val crosshairContentPoint: FloatPoint,
@@ -109,6 +125,14 @@ sealed interface ScopeXEvent {
             override val source: ScopeXInputSource,
         ) : Canonical
 
+        data class StartRecording(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
+        data class FinishRecording(
+            override val source: ScopeXInputSource,
+        ) : Canonical
+
         data class RecenterScope(
             override val source: ScopeXInputSource,
         ) : Canonical
@@ -123,6 +147,13 @@ sealed interface ScopeXEvent {
             val text: String,
         ) : Result
 
+        data class AsrTranscript(
+            val confirmedText: String,
+            val partialText: String? = null,
+        ) : Result
+
+        data object AsrEndpoint : Result
+
         data class CrosshairMoved(
             val crosshairContentPoint: FloatPoint,
             val dominantMovementAxis: ScopeXMovementAxis,
@@ -132,6 +163,7 @@ sealed interface ScopeXEvent {
     sealed interface Timer : ScopeXEvent {
         data object ActiveSourceIdleTimeout : Timer
         data object QuitConfirmationTimeout : Timer
+        data object LongSilenceTimeout : Timer
     }
 
     sealed interface Configuration : ScopeXEvent {
@@ -210,6 +242,14 @@ sealed interface ScopeXEffectCommand {
 
     data object ShowEmptyInputCachePrompt : ScopeXEffectCommand
 
+    data object ShowMicIcon : ScopeXEffectCommand
+
+    data object HideMicIcon : ScopeXEffectCommand
+
+    data object StartAsr : ScopeXEffectCommand
+
+    data object FinishAsr : ScopeXEffectCommand
+
     data object ShowClipboardImportBadge : ScopeXEffectCommand
 
     data object HideClipboardImportBadge : ScopeXEffectCommand
@@ -276,8 +316,26 @@ object ScopeXReducer {
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
 
+            event == ScopeXEvent.Timer.LongSilenceTimeout ||
+                event == ScopeXEvent.Result.AsrEndpoint ->
+                reduceRecordingSegment(state)
+
             event is ScopeXEvent.Result.AppendInputCacheEntry ->
                 ScopeXTransition(state.withInputCache(state.inputCache.appendEntry(event.text)))
+
+            event is ScopeXEvent.Result.AsrTranscript ->
+                when (state) {
+                    is ScopeXInteractionState.Recording ->
+                        ScopeXTransition(
+                            state.copy(
+                                newLineBuffer = ScopeXNewLineBuffer(
+                                    confirmedText = event.confirmedText,
+                                    partialText = event.partialText,
+                                ),
+                            ),
+                        )
+                    else -> ScopeXTransition(state)
+                }
 
             event is ScopeXEvent.Result.CrosshairMoved ->
                 reduceCrosshairMoved(state, event)
@@ -294,6 +352,14 @@ object ScopeXReducer {
     ): ScopeXTransition {
         if (!state.sourceLock.accepts(event.source)) {
             return ScopeXTransition(state)
+        }
+
+        if (event is ScopeXEvent.Canonical.StartRecording) {
+            return reduceStartRecording(state, event.source)
+        }
+
+        if (state is ScopeXInteractionState.Recording) {
+            return reduceRecordingCanonical(state, event)
         }
 
         val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
@@ -368,9 +434,87 @@ object ScopeXReducer {
                     ),
                 )
             }
+            is ScopeXEvent.Canonical.StartRecording,
+            is ScopeXEvent.Canonical.FinishRecording -> return ScopeXTransition(state)
         }
 
         return ScopeXTransition(nextState, listOf(effect))
+    }
+
+    private fun reduceRecordingSegment(state: ScopeXInteractionState): ScopeXTransition =
+        when (state) {
+            is ScopeXInteractionState.Recording ->
+                ScopeXTransition(state.commitNewLineBuffer())
+            else -> ScopeXTransition(state)
+        }
+
+    private fun reduceStartRecording(
+        state: ScopeXInteractionState,
+        source: ScopeXInputSource,
+    ): ScopeXTransition {
+        val sourceLock = state.sourceLock.acquire(source)
+        val effects = listOf(ScopeXEffectCommand.ShowMicIcon, ScopeXEffectCommand.StartAsr)
+
+        return when (state) {
+            is ScopeXInteractionState.LiveScope -> {
+                val inputCache = state.inputCache.highlightTailOrNull()
+                ScopeXTransition(
+                    ScopeXInteractionState.Recording(
+                        crosshairContentPoint = state.crosshairContentPoint,
+                        logicalDisplaySize = state.logicalDisplaySize,
+                        lastDominantMovementAxis = state.lastDominantMovementAxis,
+                        edgeZoneSize = state.edgeZoneSize,
+                        sourceLock = sourceLock,
+                        inputCache = inputCache,
+                        preRecordingInputCache = inputCache,
+                    ),
+                    if (state.edgeScrollDirection == null) {
+                        effects
+                    } else {
+                        listOf(ScopeXEffectCommand.StopEdgeScroll) + effects
+                    },
+                )
+            }
+            is ScopeXInteractionState.InputCachePanelOpen ->
+                ScopeXTransition(
+                    ScopeXInteractionState.Recording(
+                        crosshairContentPoint = state.crosshairContentPoint,
+                        logicalDisplaySize = state.logicalDisplaySize,
+                        lastDominantMovementAxis = state.lastDominantMovementAxis,
+                        edgeZoneSize = state.edgeZoneSize,
+                        sourceLock = sourceLock,
+                        inputCache = state.inputCache,
+                        preRecordingInputCache = state.inputCache,
+                    ),
+                    effects,
+                )
+            is ScopeXInteractionState.Recording -> ScopeXTransition(state)
+        }
+    }
+
+    private fun reduceRecordingCanonical(
+        state: ScopeXInteractionState.Recording,
+        event: ScopeXEvent.Canonical,
+    ): ScopeXTransition {
+        if (event !is ScopeXEvent.Canonical.FinishRecording) {
+            return ScopeXTransition(state)
+        }
+
+        val recording = state
+            .copy(sourceLock = state.sourceLock.acquire(event.source))
+            .commitNewLineBuffer()
+        val inputCache = if (recording.savedLineCount > 0) {
+            recording.inputCache.highlightTailOrNull()
+        } else {
+            recording.inputCache.restoreHighlightFrom(recording.preRecordingInputCache)
+        }
+        val effects = listOf(ScopeXEffectCommand.FinishAsr, ScopeXEffectCommand.HideMicIcon)
+
+        if (recording.savedLineCount == 0 && inputCache.entries.isEmpty()) {
+            return ScopeXTransition(recording.toLiveScope(inputCache), effects)
+        }
+
+        return ScopeXTransition(recording.toInputCachePanelOpen(inputCache), effects)
     }
 
     private fun reduceCrosshairMoved(
@@ -492,6 +636,54 @@ private fun ScopeXInteractionState.InputCachePanelOpen.toLiveScope(): ScopeXInte
 
 private fun ScopeXInputCache.highlightTail(): ScopeXInputCache =
     copy(highlightedIndex = entries.lastIndex)
+
+private fun ScopeXInputCache.highlightTailOrNull(): ScopeXInputCache =
+    copy(highlightedIndex = entries.indices.lastOrNull())
+
+private fun ScopeXInputCache.restoreHighlightFrom(
+    preRecordingInputCache: ScopeXInputCache,
+): ScopeXInputCache =
+    copy(
+        highlightedIndex = preRecordingInputCache.highlightedIndex
+            ?.takeIf { it in entries.indices },
+    )
+
+private fun ScopeXInteractionState.Recording.commitNewLineBuffer(): ScopeXInteractionState.Recording {
+    val text = newLineBuffer.confirmedText.trim()
+    if (text.isEmpty()) {
+        return copy(newLineBuffer = ScopeXNewLineBuffer())
+    }
+
+    return copy(
+        inputCache = inputCache.appendEntry(text),
+        newLineBuffer = ScopeXNewLineBuffer(),
+        savedLineCount = savedLineCount + 1,
+    )
+}
+
+private fun ScopeXInteractionState.Recording.toInputCachePanelOpen(
+    inputCache: ScopeXInputCache,
+): ScopeXInteractionState.InputCachePanelOpen =
+    ScopeXInteractionState.InputCachePanelOpen(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache,
+    )
+
+private fun ScopeXInteractionState.Recording.toLiveScope(
+    inputCache: ScopeXInputCache,
+): ScopeXInteractionState.LiveScope =
+    ScopeXInteractionState.LiveScope(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache.copy(highlightedIndex = null),
+    )
 
 private fun ScopeXInteractionState.LiveScope.centerCrosshairContentPoint(): FloatPoint =
     FloatPoint(
