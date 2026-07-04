@@ -2,6 +2,7 @@ package com.code2hack.scopex.scopex
 
 const val DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS: Long = 500L
 const val DEFAULT_EDGE_ZONE_SIZE: Float = 64f
+const val DEFAULT_INPUT_CACHE_ACTIVE_LIMIT: Int = 50
 const val DEFAULT_QUIT_CONFIRMATION_TIMEOUT_MILLIS: Long = 2_000L
 const val QUIT_CONFIRMATION_MESSAGE: String = "Double click again to quit ScopeX"
 
@@ -29,8 +30,27 @@ data class ScopeXSourceLock(
     val activeSourceIdleTimeoutMillis: Long = DEFAULT_ACTIVE_SOURCE_IDLE_TIMEOUT_MILLIS,
 )
 
+data class ScopeXInputCache(
+    val entries: List<String> = emptyList(),
+    val activeLimit: Int = DEFAULT_INPUT_CACHE_ACTIVE_LIMIT,
+    val highlightedIndex: Int? = null,
+    val clipboardImportOptedIn: Boolean = false,
+    val sessionActive: Boolean = false,
+) {
+    init {
+        require(activeLimit > 0) { "input cache active limit must be positive" }
+        require(highlightedIndex == null || highlightedIndex in entries.indices) {
+            "highlighted input cache index must reference an entry"
+        }
+    }
+
+    val clipboardImportActive: Boolean
+        get() = clipboardImportOptedIn && sessionActive
+}
+
 sealed interface ScopeXInteractionState {
     val sourceLock: ScopeXSourceLock
+    val inputCache: ScopeXInputCache
 
     data class LiveScope(
         val crosshairContentPoint: FloatPoint,
@@ -41,14 +61,17 @@ sealed interface ScopeXInteractionState {
         val quitConfirmationActive: Boolean = false,
         val systemMessage: String? = null,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        override val inputCache: ScopeXInputCache = ScopeXInputCache(),
     ) : ScopeXInteractionState
 
     data class Recording(
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        override val inputCache: ScopeXInputCache = ScopeXInputCache(),
     ) : ScopeXInteractionState
 
     data class InputCachePanelOpen(
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        override val inputCache: ScopeXInputCache = ScopeXInputCache(),
     ) : ScopeXInteractionState
 }
 
@@ -88,6 +111,10 @@ sealed interface ScopeXEvent {
     }
 
     sealed interface Result : ScopeXEvent {
+        data class AppendInputCacheEntry(
+            val text: String,
+        ) : Result
+
         data class CrosshairMoved(
             val crosshairContentPoint: FloatPoint,
             val dominantMovementAxis: ScopeXMovementAxis,
@@ -205,6 +232,9 @@ object ScopeXReducer {
 
             event == ScopeXEvent.Timer.ActiveSourceIdleTimeout ->
                 ScopeXTransition(state.withSourceLock(state.sourceLock.release()))
+
+            event is ScopeXEvent.Result.AppendInputCacheEntry ->
+                ScopeXTransition(state.withInputCache(state.inputCache.appendEntry(event.text)))
 
             event is ScopeXEvent.Result.CrosshairMoved ->
                 reduceCrosshairMoved(state, event)
@@ -324,6 +354,26 @@ private fun ScopeXInteractionState.withSourceLock(
         is ScopeXInteractionState.Recording -> copy(sourceLock = sourceLock)
         is ScopeXInteractionState.InputCachePanelOpen -> copy(sourceLock = sourceLock)
     }
+
+private fun ScopeXInteractionState.withInputCache(
+    inputCache: ScopeXInputCache,
+): ScopeXInteractionState =
+    when (this) {
+        is ScopeXInteractionState.LiveScope -> copy(inputCache = inputCache)
+        is ScopeXInteractionState.Recording -> copy(inputCache = inputCache)
+        is ScopeXInteractionState.InputCachePanelOpen -> copy(inputCache = inputCache)
+    }
+
+private fun ScopeXInputCache.appendEntry(text: String): ScopeXInputCache {
+    val nextEntries = entries + text
+    val droppedCount = (nextEntries.size - activeLimit).coerceAtLeast(0)
+    val boundedEntries = nextEntries.drop(droppedCount)
+    val nextHighlightedIndex = highlightedIndex
+        ?.minus(droppedCount)
+        ?.takeIf { it in boundedEntries.indices }
+
+    return copy(entries = boundedEntries, highlightedIndex = nextHighlightedIndex)
+}
 
 private fun ScopeXInteractionState.LiveScope.centerCrosshairContentPoint(): FloatPoint =
     FloatPoint(

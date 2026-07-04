@@ -541,6 +541,40 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun inputCacheAppendsOrderedEntriesAndPreservesDuplicates() {
+        val state = liveScope()
+
+        val first = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Result.AppendInputCacheEntry("same"),
+        ).state
+        val second = ScopeXReducer.reduce(
+            state = first,
+            event = ScopeXEvent.Result.AppendInputCacheEntry("same"),
+        ).state
+
+        assertEquals(
+            ScopeXInputCache(entries = listOf("same", "same")),
+            second.inputCache,
+        )
+    }
+
+    @Test
+    fun inputCacheDefaultLimitDropsOldestHeadEntries() {
+        val finalState = (1..51).fold(liveScope() as ScopeXInteractionState) { state, index ->
+            ScopeXReducer.reduce(
+                state = state,
+                event = ScopeXEvent.Result.AppendInputCacheEntry("line-$index"),
+            ).state
+        }
+
+        assertEquals(50, finalState.inputCache.entries.size)
+        assertEquals("line-2", finalState.inputCache.entries.first())
+        assertEquals("line-51", finalState.inputCache.entries.last())
+        assertEquals(DEFAULT_INPUT_CACHE_ACTIVE_LIMIT, finalState.inputCache.activeLimit)
+    }
+
+    @Test
     fun quitConfirmationTimeoutClearsConfirmationState() {
         val state = liveScope(
             quitConfirmationActive = true,
@@ -558,6 +592,7 @@ class ScopeXReducerTest {
 
     private fun liveScope(
         sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        inputCache: ScopeXInputCache = ScopeXInputCache(),
         crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
         edgeScrollDirection: ScopeXEdgeScrollDirection? = null,
         lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
@@ -568,6 +603,7 @@ class ScopeXReducerTest {
         crosshairContentPoint = crosshairContentPoint,
         logicalDisplaySize = logicalDisplaySize,
         sourceLock = sourceLock,
+        inputCache = inputCache,
         edgeScrollDirection = edgeScrollDirection,
         lastDominantMovementAxis = lastDominantMovementAxis,
         edgeZoneSize = edgeZoneSize,
