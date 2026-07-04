@@ -91,7 +91,7 @@ class ScopeXReducerTest {
     fun canonicalTouchActionInNonLiveScopeStateIsNoOp() {
         val states = listOf(
             ScopeXInteractionState.Recording(),
-            ScopeXInteractionState.InputCachePanelOpen(),
+            inputCachePanelOpen(),
         )
 
         for (state in states) {
@@ -575,6 +575,102 @@ class ScopeXReducerTest {
     }
 
     @Test
+    fun toggleInputCacheOpensPanelFreezesScopeAndHighlightsTail() {
+        val inputCache = ScopeXInputCache(entries = listOf("first", "second"))
+        val state = liveScope(inputCache = inputCache)
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.ToggleInputCache(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = inputCache.copy(highlightedIndex = 1),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
+    fun toggleInputCacheStopsEdgeScrollWhenOpeningPanel() {
+        val inputCache = ScopeXInputCache(entries = listOf("first", "second"))
+        val state = liveScope(
+            inputCache = inputCache,
+            edgeScrollDirection = ScopeXEdgeScrollDirection.Left,
+        )
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.ToggleInputCache(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            inputCachePanelOpen(
+                inputCache = inputCache.copy(highlightedIndex = 1),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(listOf(ScopeXEffectCommand.StopEdgeScroll), transition.effects)
+    }
+
+    @Test
+    fun toggleInputCacheOnEmptyCacheKeepsLiveScopeAndShowsPrompt() {
+        val state = liveScope()
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.ToggleInputCache(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            state.copy(
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(listOf(ScopeXEffectCommand.ShowEmptyInputCachePrompt), transition.effects)
+    }
+
+    @Test
+    fun toggleInputCacheClosesPanelAndUnfreezesScope() {
+        val inputCache = ScopeXInputCache(
+            entries = listOf("first", "second"),
+            highlightedIndex = 1,
+        )
+        val state = inputCachePanelOpen(inputCache = inputCache)
+
+        val transition = ScopeXReducer.reduce(
+            state = state,
+            event = ScopeXEvent.Canonical.ToggleInputCache(ScopeXInputSource.Glasses),
+        )
+
+        assertEquals(
+            liveScope(
+                inputCache = inputCache.copy(highlightedIndex = null),
+                sourceLock = ScopeXSourceLock(
+                    activeSource = ScopeXInputSource.Glasses,
+                    ownsActions = true,
+                ),
+            ),
+            transition.state,
+        )
+        assertEquals(emptyList(), transition.effects)
+    }
+
+    @Test
     fun quitConfirmationTimeoutClearsConfirmationState() {
         val state = liveScope(
             quitConfirmationActive = true,
@@ -609,5 +705,20 @@ class ScopeXReducerTest {
         edgeZoneSize = edgeZoneSize,
         quitConfirmationActive = quitConfirmationActive,
         systemMessage = systemMessage,
+    )
+
+    private fun inputCachePanelOpen(
+        sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
+        inputCache: ScopeXInputCache = ScopeXInputCache(),
+        crosshairContentPoint: FloatPoint = this.crosshairContentPoint,
+        lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        edgeZoneSize: Float = 100f,
+    ) = ScopeXInteractionState.InputCachePanelOpen(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache,
     )
 }

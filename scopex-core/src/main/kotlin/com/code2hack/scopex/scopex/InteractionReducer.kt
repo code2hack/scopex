@@ -70,6 +70,10 @@ sealed interface ScopeXInteractionState {
     ) : ScopeXInteractionState
 
     data class InputCachePanelOpen(
+        val crosshairContentPoint: FloatPoint,
+        val logicalDisplaySize: IntSize,
+        val lastDominantMovementAxis: ScopeXMovementAxis = ScopeXMovementAxis.Horizontal,
+        val edgeZoneSize: Float = DEFAULT_EDGE_ZONE_SIZE,
         override val sourceLock: ScopeXSourceLock = ScopeXSourceLock(),
         override val inputCache: ScopeXInputCache = ScopeXInputCache(),
     ) : ScopeXInteractionState
@@ -99,6 +103,10 @@ sealed interface ScopeXEvent {
         data class ZoomAtCrosshair(
             override val source: ScopeXInputSource,
             val scaleFactor: Float,
+        ) : Canonical
+
+        data class ToggleInputCache(
+            override val source: ScopeXInputSource,
         ) : Canonical
 
         data class RecenterScope(
@@ -184,6 +192,8 @@ sealed interface ScopeXEffectCommand {
         val message: String,
     ) : ScopeXEffectCommand
 
+    data object ShowEmptyInputCachePrompt : ScopeXEffectCommand
+
     data class StartQuitConfirmationTimer(
         val timeoutMillis: Long,
     ) : ScopeXEffectCommand
@@ -254,6 +264,12 @@ object ScopeXReducer {
         }
 
         val nextState = state.withSourceLock(state.sourceLock.acquire(event.source))
+        if (nextState is ScopeXInteractionState.InputCachePanelOpen &&
+            event is ScopeXEvent.Canonical.ToggleInputCache
+        ) {
+            return ScopeXTransition(nextState.toLiveScope())
+        }
+
         if (nextState !is ScopeXInteractionState.LiveScope) {
             return ScopeXTransition(state)
         }
@@ -269,6 +285,22 @@ object ScopeXReducer {
                 ScopeXEffectCommand.InjectScroll(nextState.crosshairContentPoint, event.delta)
             is ScopeXEvent.Canonical.ZoomAtCrosshair ->
                 ScopeXEffectCommand.InjectZoom(nextState.crosshairContentPoint, event.scaleFactor)
+            is ScopeXEvent.Canonical.ToggleInputCache -> {
+                if (nextState.inputCache.entries.isEmpty()) {
+                    return ScopeXTransition(
+                        nextState,
+                        listOf(ScopeXEffectCommand.ShowEmptyInputCachePrompt),
+                    )
+                }
+
+                val effects = if (nextState.edgeScrollDirection == null) {
+                    emptyList()
+                } else {
+                    listOf(ScopeXEffectCommand.StopEdgeScroll)
+                }
+
+                return ScopeXTransition(nextState.toInputCachePanelOpen(), effects)
+            }
             is ScopeXEvent.Canonical.RecenterScope -> {
                 val center = nextState.centerCrosshairContentPoint()
                 val effects = buildList {
@@ -374,6 +406,29 @@ private fun ScopeXInputCache.appendEntry(text: String): ScopeXInputCache {
 
     return copy(entries = boundedEntries, highlightedIndex = nextHighlightedIndex)
 }
+
+private fun ScopeXInteractionState.LiveScope.toInputCachePanelOpen(): ScopeXInteractionState.InputCachePanelOpen =
+    ScopeXInteractionState.InputCachePanelOpen(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache.highlightTail(),
+    )
+
+private fun ScopeXInteractionState.InputCachePanelOpen.toLiveScope(): ScopeXInteractionState.LiveScope =
+    ScopeXInteractionState.LiveScope(
+        crosshairContentPoint = crosshairContentPoint,
+        logicalDisplaySize = logicalDisplaySize,
+        lastDominantMovementAxis = lastDominantMovementAxis,
+        edgeZoneSize = edgeZoneSize,
+        sourceLock = sourceLock,
+        inputCache = inputCache.copy(highlightedIndex = null),
+    )
+
+private fun ScopeXInputCache.highlightTail(): ScopeXInputCache =
+    copy(highlightedIndex = entries.lastIndex)
 
 private fun ScopeXInteractionState.LiveScope.centerCrosshairContentPoint(): FloatPoint =
     FloatPoint(
