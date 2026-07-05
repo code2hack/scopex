@@ -28,6 +28,10 @@ _Avoid_: old whole-display names
 The required margin around the logical display that lets the crosshair reach content edges and corners while staying centered in the physical scope.
 _Avoid_: legacy display padding names
 
+**logical-display capture proof**:
+The first real capture milestone where a whole-display Android capture is rendered inside the padded logical display with display padding, physical scope, and crosshair visible for inspection.
+_Avoid_: generic capture demo, preview-only demo
+
 **crosshair**:
 The fixed center mark inside the physical scope used as the aim point for UI interaction.
 _Avoid_: pointer-style names
