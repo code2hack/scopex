@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -21,6 +22,7 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var activeIndicator: TextView
     private var captureActive = false
+    private var captureRequestInFlight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,15 +30,17 @@ class MainActivity : Activity() {
         CaptureProofFrameBus.setListener { frame ->
             captureView.replaceFrame(frame)
         }
-        CaptureProofFrameBus.setStopListener {
+        CaptureProofFrameBus.setStopListener { reason ->
             captureView.clearFrame()
-            setCaptureState(active = false, status = getString(R.string.capture_status_stopped))
+            captureRequestInFlight = false
+            setCaptureState(active = false, status = getString(statusForStopReason(reason)))
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_CAPTURE) return
+        captureRequestInFlight = false
         if (resultCode != RESULT_OK || data == null) {
             setCaptureState(active = false, status = getString(R.string.capture_status_denied))
             return
@@ -56,6 +60,7 @@ class MainActivity : Activity() {
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             requestCaptureConsent()
         } else {
+            captureRequestInFlight = false
             setCaptureState(
                 active = false,
                 status = getString(R.string.capture_status_notification_denied),
@@ -64,11 +69,13 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        captureRequestInFlight = false
         if (captureActive) stopCapture(getString(R.string.capture_status_stopped))
         super.onStop()
     }
 
     override fun onDestroy() {
+        captureRequestInFlight = false
         CaptureProofFrameBus.setListener(null)
         CaptureProofFrameBus.setStopListener(null)
         captureView.clearFrame()
@@ -122,7 +129,8 @@ class MainActivity : Activity() {
     }
 
     private fun startCapture() {
-        if (captureActive) return
+        if (captureActive || captureRequestInFlight) return
+        captureRequestInFlight = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -133,12 +141,19 @@ class MainActivity : Activity() {
     }
 
     private fun requestCaptureConsent() {
+        captureRequestInFlight = true
         setCaptureState(active = false, status = getString(R.string.capture_status_requesting))
         val projectionManager = getSystemService(MediaProjectionManager::class.java)
-        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            projectionManager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else {
+            projectionManager.createScreenCaptureIntent()
+        }
+        startActivityForResult(intent, REQUEST_CAPTURE)
     }
 
     private fun stopCapture(status: String) {
+        captureRequestInFlight = false
         stopService(ScopeXCaptureService.stopIntent(this))
         CaptureProofFrameBus.clear()
         captureView.clearFrame()
@@ -180,5 +195,11 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_CAPTURE = 10
         private const val REQUEST_NOTIFICATIONS = 11
+
+        internal fun statusForStopReason(reason: CaptureProofStopReason): Int =
+            when (reason) {
+                CaptureProofStopReason.Stopped -> R.string.capture_status_stopped
+                CaptureProofStopReason.Error -> R.string.capture_status_error
+            }
     }
 }

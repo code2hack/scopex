@@ -52,7 +52,7 @@ class ScopeXCaptureService : Service() {
             ?: Activity.RESULT_CANCELED
         val resultData = intent?.captureResultData()
         if (resultCode != Activity.RESULT_OK || resultData == null) {
-            stopSelf(startId)
+            stopCapture(reason = CaptureProofStopReason.Error)
             return START_NOT_STICKY
         }
 
@@ -64,7 +64,7 @@ class ScopeXCaptureService : Service() {
             startForegroundCompat(buildNotification())
             startCapture(resultCode, resultData)
         } catch (_: RuntimeException) {
-            stopCapture()
+            stopCapture(reason = CaptureProofStopReason.Error)
         }
 
         return START_NOT_STICKY
@@ -154,9 +154,10 @@ class ScopeXCaptureService : Service() {
         stopProjection: Boolean = true,
         finishService: Boolean = true,
         notifyStopped: Boolean = true,
+        reason: CaptureProofStopReason = CaptureProofStopReason.Stopped,
     ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { stopCapture(stopProjection, finishService, notifyStopped) }
+            mainHandler.post { stopCapture(stopProjection, finishService, notifyStopped, reason) }
             return
         }
         if (isStopping) return
@@ -184,7 +185,7 @@ class ScopeXCaptureService : Service() {
         imageReader = null
         captureThread = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        if (shouldNotifyStopped) CaptureProofFrameBus.notifyStopped()
+        if (shouldNotifyStopped) CaptureProofFrameBus.notifyStopped(reason)
         if (finishService) stopSelf()
 
         isStopping = false

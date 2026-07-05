@@ -4,11 +4,13 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 
+enum class CaptureProofStopReason { Stopped, Error }
+
 object CaptureProofFrameBus {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lock = Any()
     private var listener: ((Bitmap) -> Unit)? = null
-    private var stopListener: (() -> Unit)? = null
+    private var stopListener: ((CaptureProofStopReason) -> Unit)? = null
     private var pendingFrame: Bitmap? = null
     private var drainPosted = false
     private var generation = 0
@@ -21,16 +23,16 @@ object CaptureProofFrameBus {
         frame?.recycle()
     }
 
-    fun setStopListener(nextListener: (() -> Unit)?) {
+    fun setStopListener(nextListener: ((CaptureProofStopReason) -> Unit)?) {
         synchronized(lock) {
             stopListener = nextListener
         }
     }
 
-    fun notifyStopped() {
+    fun notifyStopped(reason: CaptureProofStopReason = CaptureProofStopReason.Stopped) {
         mainHandler.post {
             val currentListener = synchronized(lock) { stopListener }
-            currentListener?.invoke()
+            currentListener?.invoke(reason)
         }
     }
 
