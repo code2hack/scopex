@@ -8,6 +8,7 @@ object CaptureProofFrameBus {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lock = Any()
     private var listener: ((Bitmap) -> Unit)? = null
+    private var stopListener: (() -> Unit)? = null
     private var pendingFrame: Bitmap? = null
     private var drainPosted = false
     private var generation = 0
@@ -18,6 +19,19 @@ object CaptureProofFrameBus {
             if (nextListener == null) clearPendingFrameLocked() else null
         }
         frame?.recycle()
+    }
+
+    fun setStopListener(nextListener: (() -> Unit)?) {
+        synchronized(lock) {
+            stopListener = nextListener
+        }
+    }
+
+    fun notifyStopped() {
+        mainHandler.post {
+            val currentListener = synchronized(lock) { stopListener }
+            currentListener?.invoke()
+        }
     }
 
     fun beginSession(): Int {

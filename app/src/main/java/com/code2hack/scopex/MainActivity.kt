@@ -28,6 +28,10 @@ class MainActivity : Activity() {
         CaptureProofFrameBus.setListener { frame ->
             captureView.replaceFrame(frame)
         }
+        CaptureProofFrameBus.setStopListener {
+            captureView.clearFrame()
+            setCaptureState(active = false, status = getString(R.string.capture_status_stopped))
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -66,15 +70,18 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         CaptureProofFrameBus.setListener(null)
+        CaptureProofFrameBus.setStopListener(null)
         captureView.clearFrame()
         super.onDestroy()
     }
 
     private fun buildContent(): View {
         captureView = CaptureProofView(this)
-        statusText = label(getString(R.string.capture_status_idle), 16f)
+        statusText = label(getString(R.string.capture_status_idle), 16f).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         activeIndicator = label("ACTIVE CAPTURE", 14f, Typeface.BOLD).apply {
-            setTextColor(Color.rgb(255, 92, 92))
+            setTextColor(Color.rgb(160, 0, 0))
             visibility = View.GONE
         }
 
@@ -97,16 +104,16 @@ class MainActivity : Activity() {
                 button("Center") {
                     captureView.setCrosshairAnchor(ScopeXCaptureProofCrosshairAnchor.Center)
                 },
-                button("TL") {
+                button("Top Left") {
                     captureView.setCrosshairAnchor(ScopeXCaptureProofCrosshairAnchor.TopLeft)
                 },
-                button("TR") {
+                button("Top Right") {
                     captureView.setCrosshairAnchor(ScopeXCaptureProofCrosshairAnchor.TopRight)
                 },
-                button("BL") {
+                button("Bottom Left") {
                     captureView.setCrosshairAnchor(ScopeXCaptureProofCrosshairAnchor.BottomLeft)
                 },
-                button("BR") {
+                button("Bottom Right") {
                     captureView.setCrosshairAnchor(ScopeXCaptureProofCrosshairAnchor.BottomRight)
                 },
             ))
@@ -115,6 +122,7 @@ class MainActivity : Activity() {
     }
 
     private fun startCapture() {
+        if (captureActive) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -132,6 +140,7 @@ class MainActivity : Activity() {
 
     private fun stopCapture(status: String) {
         stopService(ScopeXCaptureService.stopIntent(this))
+        CaptureProofFrameBus.clear()
         captureView.clearFrame()
         setCaptureState(active = false, status = status)
     }

@@ -59,7 +59,7 @@ class ScopeXCaptureService : Service() {
         try {
             createNotificationChannel()
             if (mediaProjection != null || imageReader != null || virtualDisplay != null || captureThread != null) {
-                stopCapture(finishService = false)
+                stopCapture(finishService = false, notifyStopped = false)
             }
             startForegroundCompat(buildNotification())
             startCapture(resultCode, resultData)
@@ -150,13 +150,23 @@ class ScopeXCaptureService : Service() {
         return cropped
     }
 
-    private fun stopCapture(stopProjection: Boolean = true, finishService: Boolean = true) {
+    private fun stopCapture(
+        stopProjection: Boolean = true,
+        finishService: Boolean = true,
+        notifyStopped: Boolean = true,
+    ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { stopCapture(stopProjection, finishService) }
+            mainHandler.post { stopCapture(stopProjection, finishService, notifyStopped) }
             return
         }
-        CaptureProofFrameBus.clear()
         if (isStopping) return
+        val shouldNotifyStopped = notifyStopped && (
+            finishService ||
+                mediaProjection != null ||
+                imageReader != null ||
+                virtualDisplay != null ||
+                captureThread != null
+            )
         isStopping = true
 
         imageReader?.setOnImageAvailableListener(null, null)
@@ -174,6 +184,7 @@ class ScopeXCaptureService : Service() {
         imageReader = null
         captureThread = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        if (shouldNotifyStopped) CaptureProofFrameBus.notifyStopped()
         if (finishService) stopSelf()
 
         isStopping = false
