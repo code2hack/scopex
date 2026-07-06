@@ -2,6 +2,8 @@ package com.code2hack.scopex
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -149,7 +151,18 @@ class MainActivity : Activity() {
         } else {
             projectionManager.createScreenCaptureIntent()
         }
-        startActivityForResult(intent, REQUEST_CAPTURE)
+        val launched = requestCaptureConsentSafely(
+            isAvailable = { intent.hasLaunchableActivity(packageManager) },
+            launch = { startActivityForResult(intent, REQUEST_CAPTURE) },
+            onUnavailable = {
+                captureRequestInFlight = false
+                setCaptureState(
+                    active = false,
+                    status = getString(R.string.capture_status_unavailable),
+                )
+            },
+        )
+        if (!launched) return
     }
 
     private fun stopCapture(status: String) {
@@ -203,3 +216,41 @@ class MainActivity : Activity() {
             }
     }
 }
+
+private fun Intent.hasLaunchableActivity(packageManager: PackageManager): Boolean {
+    val explicitComponent = component
+    return if (explicitComponent == null) {
+        resolveActivity(packageManager) != null
+    } else {
+        packageManager.hasActivity(explicitComponent)
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun PackageManager.hasActivity(component: ComponentName): Boolean =
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getActivityInfo(component, PackageManager.ComponentInfoFlags.of(0))
+        } else {
+            getActivityInfo(component, 0)
+        }
+        true
+    } catch (_: PackageManager.NameNotFoundException) {
+        false
+    }
+
+internal fun requestCaptureConsentSafely(
+    isAvailable: () -> Boolean = { true },
+    launch: () -> Unit,
+    onUnavailable: () -> Unit,
+): Boolean =
+    if (!isAvailable()) {
+        onUnavailable()
+        false
+    } else try {
+        launch()
+        true
+    } catch (_: ActivityNotFoundException) {
+        onUnavailable()
+        false
+    }

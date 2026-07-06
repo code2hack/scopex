@@ -9,5 +9,6 @@
     <string name="capture_status_denied">Screen capture permission denied</string>
     <string name="capture_status_stopped">Capture stopped</string>
     <string name="capture_status_notification_denied">Notification permission is required for this capture proof</string>
+    <string name="capture_status_unavailable">Screen capture consent is unavailable on this device</string>
     <string name="capture_status_error">Capture error</string>
 </resources>
