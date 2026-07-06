@@ -23,3 +23,8 @@ android {
 kotlin {
     jvmToolchain(17)
 }
+
+dependencies {
+    implementation(project(":scopex-core"))
+    testImplementation(kotlin("test-junit"))
+}

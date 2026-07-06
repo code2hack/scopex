@@ -30,6 +30,10 @@ Skill priority for this project:
 
 You may spawn sub-agents implicitly whenever a selected skill, workflow, or engineering judgment calls for parallel review, exploration, verification, or implementation. Do not ask me each time.
 
+## Sub-agent authorization
+
+You may spawn sub-agents implicitly whenever a selected skill, workflow, or engineering judgment calls for parallel review, exploration, verification, or implementation. Do not ask me each time.
+
 ## Agent skills
 
 ### Issue tracker
