@@ -32,6 +32,14 @@ _Avoid_: legacy display padding names
 The first real capture milestone where a whole-display Android capture is rendered inside the padded logical display with display padding, physical scope, and crosshair visible for inspection.
 _Avoid_: generic capture demo, preview-only demo
 
+**logical-display stream**:
+A real-time frame stream that supplies captured Android display content for rendering inside the padded logical display.
+_Avoid_: ADB mirror, Rokid screen capture, generic mirroring stream
+
+**logical-display stream pairing**:
+The Bluetooth-first setup step that links a Fold6 logical-display stream source to a Rokid ScopeX renderer before streaming starts, using an existing OS-level Bluetooth pairing between the devices; ScopeX does not own or close the OS Bluetooth pairing.
+_Avoid_: QR-only pairing, manual IP entry, generic device pairing
+
 **crosshair**:
 The fixed center mark inside the physical scope used as the aim point for UI interaction.
 _Avoid_: pointer-style names
