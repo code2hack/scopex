@@ -30,6 +30,10 @@ Skill priority for this project:
 5. Ponytail must not be used to skip Superpowers gates, tests, root-cause investigation, security, validation, accessibility, or required documentation.
 6. Matt’s preparation artifacts feed Superpowers; they do not replace Superpowers execution for production code.
 
+## Sub-agent authorization
+
+You may spawn sub-agents implicitly whenever a selected skill, workflow, or engineering judgment calls for parallel review, exploration, verification, or implementation. Do not ask me each time.
+
 ## Agent skills
 
 ### Issue tracker
